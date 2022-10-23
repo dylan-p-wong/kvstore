@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+option go_package = "github.com/dylan-p-wong/kvstore/api";
+
+package api;
+
+// The KV service definition.
+service KV {
+  rpc Put(KeyValue) returns (KeyValue) {}
+  rpc Get(Key) returns (KeyValue) {}
+}
+
+message KeyValue {
+  bytes key = 1;
+  bytes value = 2;
+}
+
+message Key {
+  bytes key = 1;
+}
