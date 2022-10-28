@@ -22,8 +22,12 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type KVClient interface {
-	Put(ctx context.Context, in *KeyValue, opts ...grpc.CallOption) (*KeyValue, error)
-	Get(ctx context.Context, in *Key, opts ...grpc.CallOption) (*KeyValue, error)
+	// Client
+	Put(ctx context.Context, in *PutRequest, opts ...grpc.CallOption) (*PutResponse, error)
+	Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error)
+	// Raft
+	AppendEntries(ctx context.Context, in *AppendEntriesRequest, opts ...grpc.CallOption) (*AppendEntriesResponse, error)
+	RequestVote(ctx context.Context, in *RequestVoteRequest, opts ...grpc.CallOption) (*RequestVoteResponse, error)
 }
 
 type kVClient struct {
@@ -34,8 +38,8 @@ func NewKVClient(cc grpc.ClientConnInterface) KVClient {
 	return &kVClient{cc}
 }
 
-func (c *kVClient) Put(ctx context.Context, in *KeyValue, opts ...grpc.CallOption) (*KeyValue, error) {
-	out := new(KeyValue)
+func (c *kVClient) Put(ctx context.Context, in *PutRequest, opts ...grpc.CallOption) (*PutResponse, error) {
+	out := new(PutResponse)
 	err := c.cc.Invoke(ctx, "/api.KV/Put", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -43,9 +47,27 @@ func (c *kVClient) Put(ctx context.Context, in *KeyValue, opts ...grpc.CallOptio
 	return out, nil
 }
 
-func (c *kVClient) Get(ctx context.Context, in *Key, opts ...grpc.CallOption) (*KeyValue, error) {
-	out := new(KeyValue)
+func (c *kVClient) Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error) {
+	out := new(GetResponse)
 	err := c.cc.Invoke(ctx, "/api.KV/Get", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *kVClient) AppendEntries(ctx context.Context, in *AppendEntriesRequest, opts ...grpc.CallOption) (*AppendEntriesResponse, error) {
+	out := new(AppendEntriesResponse)
+	err := c.cc.Invoke(ctx, "/api.KV/AppendEntries", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *kVClient) RequestVote(ctx context.Context, in *RequestVoteRequest, opts ...grpc.CallOption) (*RequestVoteResponse, error) {
+	out := new(RequestVoteResponse)
+	err := c.cc.Invoke(ctx, "/api.KV/RequestVote", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -56,8 +78,12 @@ func (c *kVClient) Get(ctx context.Context, in *Key, opts ...grpc.CallOption) (*
 // All implementations must embed UnimplementedKVServer
 // for forward compatibility
 type KVServer interface {
-	Put(context.Context, *KeyValue) (*KeyValue, error)
-	Get(context.Context, *Key) (*KeyValue, error)
+	// Client
+	Put(context.Context, *PutRequest) (*PutResponse, error)
+	Get(context.Context, *GetRequest) (*GetResponse, error)
+	// Raft
+	AppendEntries(context.Context, *AppendEntriesRequest) (*AppendEntriesResponse, error)
+	RequestVote(context.Context, *RequestVoteRequest) (*RequestVoteResponse, error)
 	mustEmbedUnimplementedKVServer()
 }
 
@@ -65,11 +91,17 @@ type KVServer interface {
 type UnimplementedKVServer struct {
 }
 
-func (UnimplementedKVServer) Put(context.Context, *KeyValue) (*KeyValue, error) {
+func (UnimplementedKVServer) Put(context.Context, *PutRequest) (*PutResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Put not implemented")
 }
-func (UnimplementedKVServer) Get(context.Context, *Key) (*KeyValue, error) {
+func (UnimplementedKVServer) Get(context.Context, *GetRequest) (*GetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Get not implemented")
+}
+func (UnimplementedKVServer) AppendEntries(context.Context, *AppendEntriesRequest) (*AppendEntriesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AppendEntries not implemented")
+}
+func (UnimplementedKVServer) RequestVote(context.Context, *RequestVoteRequest) (*RequestVoteResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RequestVote not implemented")
 }
 func (UnimplementedKVServer) mustEmbedUnimplementedKVServer() {}
 
@@ -85,7 +117,7 @@ func RegisterKVServer(s grpc.ServiceRegistrar, srv KVServer) {
 }
 
 func _KV_Put_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(KeyValue)
+	in := new(PutRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -97,13 +129,13 @@ func _KV_Put_Handler(srv interface{}, ctx context.Context, dec func(interface{})
 		FullMethod: "/api.KV/Put",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KVServer).Put(ctx, req.(*KeyValue))
+		return srv.(KVServer).Put(ctx, req.(*PutRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _KV_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Key)
+	in := new(GetRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -115,7 +147,43 @@ func _KV_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{})
 		FullMethod: "/api.KV/Get",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KVServer).Get(ctx, req.(*Key))
+		return srv.(KVServer).Get(ctx, req.(*GetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KV_AppendEntries_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AppendEntriesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KVServer).AppendEntries(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/api.KV/AppendEntries",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KVServer).AppendEntries(ctx, req.(*AppendEntriesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KV_RequestVote_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestVoteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KVServer).RequestVote(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/api.KV/RequestVote",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KVServer).RequestVote(ctx, req.(*RequestVoteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -134,6 +202,14 @@ var KV_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Get",
 			Handler:    _KV_Get_Handler,
+		},
+		{
+			MethodName: "AppendEntries",
+			Handler:    _KV_AppendEntries_Handler,
+		},
+		{
+			MethodName: "RequestVote",
+			Handler:    _KV_RequestVote_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

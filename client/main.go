@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	addr = flag.String("addr", "localhost:50051", "the address to connect to")
+	addr = flag.String("addr", "127.0.0.1:4444", "the address to connect to")
 )
 
 func main() {
@@ -29,15 +29,15 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	r, err := c.Put(ctx, &pb.KeyValue{Key: []byte("key"), Value: []byte("value")})
+	pr, err := c.Put(ctx, &pb.PutRequest{Key: []byte("key"), Value: []byte("value")})
 	if err != nil {
 		log.Fatalf("could not greet: %v", err)
 	}
-	log.Printf("KV: (%s, %s)", r.GetKey(), r.GetValue())
+	log.Printf("KV: %t", pr.GetSuccess())
 
-	r, err = c.Get(ctx, &pb.Key{Key: []byte("key")})
+	gr, err := c.Get(ctx, &pb.GetRequest{Key: []byte("key")})
 	if err != nil {
 		log.Fatalf("could not greet: %v", err)
 	}
-	log.Printf("KV: (%s, %s)", r.GetKey(), r.GetValue())
+	log.Printf("KV: (%s, %s)", gr.GetKey(), gr.GetValue())
 }
