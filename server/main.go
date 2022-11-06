@@ -17,15 +17,17 @@ func main() {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
-	lis, err := net.Listen("tcp", fmt.Sprintf("%s", cfg.URL))
+	listen, err := net.Listen("tcp", fmt.Sprintf("%s", cfg.URL))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
 	
+	server := service.NewServer(cfg)
 	s := grpc.NewServer()
-	pb.RegisterKVServer(s, &service.Server{})
-	log.Printf("server listening at %v", lis.Addr())
-	if err := s.Serve(lis); err != nil {
+	pb.RegisterKVServer(s, &server)
+
+	log.Printf("server listening at %v", listen.Addr())
+	if err := s.Serve(listen); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
 }

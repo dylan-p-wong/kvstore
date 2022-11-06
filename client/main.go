@@ -17,6 +17,7 @@ var (
 
 func main() {
 	flag.Parse()
+	
 	// Set up a connection to the server.
 	conn, err := grpc.Dial(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -35,9 +36,9 @@ func main() {
 	}
 	log.Printf("KV: %t", pr.GetSuccess())
 
-	gr, err := c.Get(ctx, &pb.GetRequest{Key: []byte("key")})
-	if err != nil {
-		log.Fatalf("could not greet: %v", err)
-	}
-	log.Printf("KV: (%s, %s)", gr.GetKey(), gr.GetValue())
+	// gr, err := c.Get(ctx, &pb.GetRequest{Key: []byte("key")})
+	// if err != nil {
+	// 	log.Fatalf("could not greet: %v", err)
+	// }
+	// log.Printf("KV: (%s, %s)", gr.GetKey(), gr.GetValue())
 }
