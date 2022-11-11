@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"log"
+	"os"
+	"strings"
 	"time"
 
+	pb "github.com/dylan-p-wong/kvstore/api"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	pb "github.com/dylan-p-wong/kvstore/api"
 )
 
 var (
@@ -17,7 +20,7 @@ var (
 
 func main() {
 	flag.Parse()
-	
+
 	// Set up a connection to the server.
 	conn, err := grpc.Dial(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -26,19 +29,54 @@ func main() {
 	defer conn.Close()
 	c := pb.NewKVClient(conn)
 
-	// Contact the server and print out its response.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		s := strings.Split(scanner.Text(), " ")
 
-	pr, err := c.Put(ctx, &pb.PutRequest{Key: []byte("key"), Value: []byte("value")})
-	if err != nil {
-		log.Fatalf("could not greet: %v", err)
+		if len(s) == 0 {
+			log.Printf("invalid command")
+			continue
+		}
+
+		op := s[0]
+
+		if op == "GET" {
+			if len(s) != 2 {
+				log.Printf("invalid number of args")
+				continue
+			}
+
+			key := s[1]
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			gr, err := c.Get(ctx, &pb.GetRequest{Key: []byte(key)})
+			if err != nil {
+				log.Fatalf("could not get: %v", err)
+			}
+			log.Printf("KV: (%s, %s)", gr.GetKey(), gr.GetValue())
+
+		} else if op == "PUT" {
+			if len(s) != 3 {
+				log.Printf("invalid number of args")
+				continue
+			}
+
+			key := s[1]
+			value := s[2]
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			pr, err := c.Put(ctx, &pb.PutRequest{Key: []byte(key), Value: []byte(value)})
+			if err != nil {
+				log.Fatalf("could not put: %v", err)
+			}
+			log.Printf("KV: %t", pr.GetSuccess())
+		} else {
+			log.Printf("invalid operation")
+			continue
+		}
 	}
-	log.Printf("KV: %t", pr.GetSuccess())
-
-	// gr, err := c.Get(ctx, &pb.GetRequest{Key: []byte("key")})
-	// if err != nil {
-	// 	log.Fatalf("could not greet: %v", err)
-	// }
-	// log.Printf("KV: (%s, %s)", gr.GetKey(), gr.GetValue())
 }
