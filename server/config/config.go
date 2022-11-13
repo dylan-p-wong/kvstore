@@ -14,7 +14,7 @@ type ServerConfig struct {
 }
 
 func LoadConfig() (ServerConfig, error) {
-	id := flag.Int("name", 0, "The node id")
+	id := flag.Int("id", 0, "The node id")
 	url := flag.String("url", "127.0.0.1:50051", "The server port")
 	peers := flag.String("peers", "", "peer ports")
 

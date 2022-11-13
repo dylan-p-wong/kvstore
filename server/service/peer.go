@@ -38,12 +38,16 @@ func NewPeer(id int, url string, heartbeatInterval time.Duration, server *Server
 }
 
 func (p *peer) SendVoteRequest(request *pb.RequestVoteRequest, requestVoteResponseChannel chan *pb.RequestVoteResponse) {
+	p.server.sugar.Infow("sending request vote request", "peer", p.id)
 	response, err := p.client.RequestVote(context.Background(), request)
 
 	// TODO
 
 	if err == nil {
+		p.server.sugar.Infow("success sending request vote request", "response", response)
 		requestVoteResponseChannel <- response
+	} else {
+		p.server.sugar.Infow("error sending request vote request", "err", err)
 	}
 }
 
@@ -58,9 +62,7 @@ func (p *peer) SendAppendEntriesRequest(request *pb.AppendEntriesRequest) {
 
 	// TODO
 
-	p.server.events <- RPCRequest{
-		Command: response,
-	}
+	p.server.send(response)
 }
 
 func (p *peer) StartHeartbeat() {

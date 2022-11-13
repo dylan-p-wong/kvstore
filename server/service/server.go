@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"log"
 	"sync"
 	"time"
 
@@ -22,8 +21,8 @@ const (
 )
 
 const (
-	DefaultHeartbeatInterval = 1000 * time.Millisecond
-	DefaultElectionTimeout   = 150 * time.Millisecond
+	DefaultHeartbeatInterval = 5000 * time.Millisecond
+	DefaultElectionTimeout   = 5000 * time.Millisecond
 )
 
 type RaftState struct {
@@ -73,6 +72,8 @@ func NewServer(id int, url string, sugar *zap.SugaredLogger) *Server {
 	}
 
 	s := &Server{
+		events: make(chan RPCRequest),
+
 		raftState:         state,
 		peers:             make(map[int]*peer),
 		id:                id,
@@ -115,8 +116,7 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, error) {
-	log.Printf("Received KV Pair: %s %s", in.GetKey(), in.GetValue())
-	defer log.Printf("Finished Put")
+	s.sugar.Infow("received PUT request", "request", in)
 
 	response, err := s.send(in)
 
@@ -128,15 +128,12 @@ func (s *Server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, e
 }
 
 func (s *Server) Get(ctx context.Context, in *pb.GetRequest) (*pb.GetResponse, error) {
-	log.Printf("Received Key: %v", in.GetKey())
-	defer log.Printf("Finished Get")
-
 	return &pb.GetResponse{Success: true, Key: []byte(in.GetKey()), Value: []byte("?")}, nil
 }
 
 func (s *Server) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
-	log.Printf("AppendEntriesStart")
-	defer log.Printf("AppendEntriesEnd")
+	s.sugar.Infow("received append entries request", "request", in)
+	defer s.sugar.Infow("responsed to append entries request", "request", in)
 
 	response, err := s.send(in)
 
@@ -148,13 +145,16 @@ func (s *Server) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest)
 }
 
 func (s *Server) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (*pb.RequestVoteResponse, error) {
-	log.Printf("RequestVote")
-	defer log.Printf("RequestEnd")
+	s.sugar.Infow("received request vote request", "request", in)
+	defer s.sugar.Infow("responsed to request vote request", "request", in)
 
-	return &pb.RequestVoteResponse{
-		Term:        0,
-		VoteGranted: true,
-	}, nil
+	response, err := s.send(in)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return response.(*pb.RequestVoteResponse), nil
 }
 
 func (s *Server) AddPeer(id int, url string) error {
@@ -177,6 +177,8 @@ func (s *Server) AddPeer(id int, url string) error {
 	}
 
 	s.peers[id] = peer
+
+	s.sugar.Infow("added peer", "id", id, "url", url)
 
 	return nil
 }

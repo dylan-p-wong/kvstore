@@ -1,6 +1,7 @@
 package service
 
 import (
+	"math"
 	"time"
 
 	pb "github.com/dylan-p-wong/kvstore/api"
@@ -13,7 +14,7 @@ type RPCResponse struct {
 
 type RPCRequest struct {
 	Command         interface{}
-	ResponseChannel chan<- RPCResponse
+	ResponseChannel chan RPCResponse
 }
 
 // Sends to event loop
@@ -25,9 +26,11 @@ func (s *Server) send(command interface{}) (interface{}, error) {
 		ResponseChannel: channel,
 	}
 
+	s.sugar.Infow("SENDING TO EVENT LOOP", "event", rpc)
 	s.events <- rpc
 
 	response := <-channel
+	s.sugar.Infow("GOT RESPONSE FROM EVENT LOOP", "event", rpc)
 
 	if response.Error != nil {
 		return nil, response.Error
@@ -54,16 +57,21 @@ func (s *Server) followerLoop() {
 	// should be random between an interval
 	timeoutChannel := time.After(s.electionTimeout)
 
+	// follower event loop
+	s.sugar.Infow("waiting for events", "state", "FOLLOWER")
 	for s.raftState.state == FOLLOWER {
 		select {
 		case <-s.stopped:
 			return
 		case event := <-s.events:
+			s.sugar.Infow("event recieved", "state", "FOLLOWER", "event", event)
 			switch event.Command.(type) {
 			case *pb.AppendEntriesRequest:
-				s.processAppendEntriesRequest(event.Command.(*pb.AppendEntriesRequest))
+				s.sugar.Infow("recieved append entries request", "state", "FOLLOWER")
+				event.ResponseChannel <- s.processAppendEntriesRequest(event.Command.(*pb.AppendEntriesRequest))
 			case *pb.RequestVoteRequest:
-				s.processRequestVoteRequest(event.Command.(*pb.RequestVoteRequest))
+				s.sugar.Infow("recieved request vote request", "state", "FOLLOWER")
+				event.ResponseChannel <- s.processRequestVoteRequest(event.Command.(*pb.RequestVoteRequest))
 			}
 		case <-timeoutChannel:
 			s.sugar.Infow("follower timeout")
@@ -114,13 +122,14 @@ func (s *Server) candidateLoop() {
 			doVote = false
 		}
 
-		if votesGranted == (len(s.peers)+1)/2 {
-			s.sugar.Infow("candidate promoted to leader")
+		if votesGranted == int(math.Ceil((float64(len(s.peers)+1))/2)) {
+			s.sugar.Infow("candidate promoted to leader", "votes_granted", votesGranted)
 			s.raftState.state = LEADER
 			return
 		}
 
 		// candidate event loop
+		s.sugar.Infow("waiting for events", "state", "CANDIDATE")
 		select {
 		case <-s.stopped:
 			s.sugar.Infow("candidate stopped")
@@ -128,15 +137,20 @@ func (s *Server) candidateLoop() {
 			return
 		case response := <-requestVoteResponseChannel:
 			success := s.processRequestVoteResponse(response)
+			s.sugar.Infow("recieved request vote response", "state", "CANDIDATE")
 			if success {
 				votesGranted++
+				s.sugar.Infow("recieved vote", "votes_granted", votesGranted)
 			}
 		case event := <-s.events:
+			s.sugar.Infow("event recieved", "state", "CANDIDATE", "event", event)
 			switch event.Command.(type) {
 			case *pb.AppendEntriesRequest:
-				s.processAppendEntriesRequest(event.Command.(*pb.AppendEntriesRequest))
+				s.sugar.Infow("recieved append entries request", "state", "CANDIDATE")
+				event.ResponseChannel <- s.processAppendEntriesRequest(event.Command.(*pb.AppendEntriesRequest))
 			case *pb.RequestVoteRequest:
-				s.processRequestVoteRequest(event.Command.(*pb.RequestVoteRequest))
+				s.sugar.Infow("recieved request vote request", "state", "CANDIDATE")
+				event.ResponseChannel <- s.processRequestVoteRequest(event.Command.(*pb.RequestVoteRequest))
 			}
 		case <-timeoutChannel:
 			s.sugar.Infow("candidate timeout")
@@ -172,6 +186,9 @@ func (s *Server) leaderLoop() {
 		s.send(&pb.PutRequest{})
 	}()
 
+
+	// leader event loop
+	s.sugar.Infow("waiting for events", "state", "LEADER")
 	for s.raftState.state == LEADER {
 		select {
 		case <-s.stopped:
@@ -182,29 +199,20 @@ func (s *Server) leaderLoop() {
 			s.raftState.state = STOPPED
 			return
 		case event := <-s.events:
+			s.sugar.Infow("event recieved", "state", "LEADER", "event", event)
 			switch event.Command.(type) {
 			case *pb.PutRequest:
+				s.sugar.Infow("recieved PUT request", "state", "LEADER")
 				s.processPutRequest(event.Command.(*pb.PutRequest), event.ResponseChannel)
 				continue
 			case *pb.AppendEntriesRequest:
-				s.processAppendEntriesRequest(event.Command.(*pb.AppendEntriesRequest))
-				event.ResponseChannel <- RPCResponse{
-					Response: &pb.AppendEntriesResponse{
-						Term:    event.Command.(*pb.AppendEntriesResponse).Term,
-						Success: true,
-					},
-					Error: nil,
-				}
+				s.sugar.Infow("recieved append entries request", "state", "LEADER")
+				event.ResponseChannel <- s.processAppendEntriesRequest(event.Command.(*pb.AppendEntriesRequest))
 			case *pb.RequestVoteRequest:
-				s.processRequestVoteRequest(event.Command.(*pb.RequestVoteRequest))
-				event.ResponseChannel <- RPCResponse{
-					Response: &pb.RequestVoteResponse{
-						Term:        event.Command.(*pb.RequestVoteRequest).Term,
-						VoteGranted: true,
-					},
-					Error: nil,
-				}
+				s.sugar.Infow("recieved request vote request", "state", "LEADER")
+				event.ResponseChannel <- s.processRequestVoteRequest(event.Command.(*pb.RequestVoteRequest))
 			case *pb.AppendEntriesResponse:
+				s.sugar.Infow("recieved append entries response", "state", "LEADER")
 				s.processAppendEntriesResponse(event.Command.(*pb.AppendEntriesResponse))
 			}
 		}
