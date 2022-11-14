@@ -17,7 +17,7 @@ type peer struct {
 	heartbeatInterval time.Duration
 
 	stopChannel chan bool
-	server *Server
+	server      *Server
 }
 
 func NewPeer(id int, url string, heartbeatInterval time.Duration, server *Server) (*peer, error) {
@@ -33,7 +33,7 @@ func NewPeer(id int, url string, heartbeatInterval time.Duration, server *Server
 		clientConnection:  connection,
 		client:            pb.NewKVClient(connection),
 		heartbeatInterval: heartbeatInterval,
-		server: server,
+		server:            server,
 	}, nil
 }
 
@@ -87,11 +87,11 @@ func (p *peer) Flush() {
 	// TODO prevlogindex and prevlogterm
 
 	p.SendAppendEntriesRequest(&pb.AppendEntriesRequest{
-		Term: uint64(p.server.raftState.currentTerm),
-		LeaderId: uint64(p.server.id),
+		Term:         uint64(p.server.raftState.currentTerm),
+		LeaderId:     uint64(p.server.id),
 		PrevLogIndex: 0,
-		PrevLogTerm: 0,
-		Entries: make([][]byte, 0),
+		PrevLogTerm:  0,
+		Entries:      make([][]byte, 0),
 		LeaderCommit: uint64(p.server.raftState.commitIndex),
 	})
 }

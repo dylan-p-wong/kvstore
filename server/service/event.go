@@ -26,11 +26,11 @@ func (s *Server) send(command interface{}) (interface{}, error) {
 		ResponseChannel: channel,
 	}
 
-	s.sugar.Infow("SENDING TO EVENT LOOP", "event", rpc)
+	s.sugar.Infow("SENDING TO EVENT LOOP", "command", command)
 	s.events <- rpc
 
 	response := <-channel
-	s.sugar.Infow("GOT RESPONSE FROM EVENT LOOP", "event", rpc)
+	s.sugar.Infow("GOT RESPONSE FROM EVENT LOOP", "command", command)
 
 	if response.Error != nil {
 		return nil, response.Error
@@ -64,7 +64,7 @@ func (s *Server) followerLoop() {
 		case <-s.stopped:
 			return
 		case event := <-s.events:
-			s.sugar.Infow("event recieved", "state", "FOLLOWER", "event", event)
+			s.sugar.Infow("event recieved", "state", "FOLLOWER")
 			switch event.Command.(type) {
 			case *pb.AppendEntriesRequest:
 				s.sugar.Infow("recieved append entries request", "state", "FOLLOWER")
@@ -143,7 +143,7 @@ func (s *Server) candidateLoop() {
 				s.sugar.Infow("recieved vote", "votes_granted", votesGranted)
 			}
 		case event := <-s.events:
-			s.sugar.Infow("event recieved", "state", "CANDIDATE", "event", event)
+			s.sugar.Infow("event recieved", "state", "CANDIDATE")
 			switch event.Command.(type) {
 			case *pb.AppendEntriesRequest:
 				s.sugar.Infow("recieved append entries request", "state", "CANDIDATE")
@@ -199,7 +199,7 @@ func (s *Server) leaderLoop() {
 			s.raftState.state = STOPPED
 			return
 		case event := <-s.events:
-			s.sugar.Infow("event recieved", "state", "LEADER", "event", event)
+			s.sugar.Infow("event recieved", "state", "LEADER")
 			switch event.Command.(type) {
 			case *pb.PutRequest:
 				s.sugar.Infow("recieved PUT request", "state", "LEADER")
@@ -221,6 +221,7 @@ func (s *Server) leaderLoop() {
 
 func (s *Server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) RPCResponse {
 	var response RPCResponse
+	response.Error = nil
 
 	// 1.
 	if request.Term < uint64(s.raftState.currentTerm) {
@@ -298,6 +299,7 @@ func (s *Server) updateCurrentTerm(term int, leaderId int) {
 
 func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCResponse {
 	var response RPCResponse
+	response.Error = nil
 
 	if request.Term < uint64(s.raftState.currentTerm) {
 		response.Response = &pb.RequestVoteResponse{
