@@ -41,8 +41,6 @@ func (p *peer) SendVoteRequest(request *pb.RequestVoteRequest, requestVoteRespon
 	p.server.sugar.Infow("sending request vote request", "peer", p.id)
 	response, err := p.client.RequestVote(context.Background(), request)
 
-	// TODO
-
 	if err == nil {
 		p.server.sugar.Infow("success sending request vote request", "response", response)
 		requestVoteResponseChannel <- response
@@ -52,7 +50,7 @@ func (p *peer) SendVoteRequest(request *pb.RequestVoteRequest, requestVoteRespon
 }
 
 func (p *peer) SendAppendEntriesRequest(request *pb.AppendEntriesRequest) {
-	p.server.sugar.Infow("sending append entries request", "peer", p.id)
+	p.server.sugar.Infow("sending append entries request", "peer", p.id, "request", request)
 	response, err := p.client.AppendEntries(context.Background(), request)
 
 	if err != nil {
@@ -62,7 +60,14 @@ func (p *peer) SendAppendEntriesRequest(request *pb.AppendEntriesRequest) {
 
 	// TODO
 
-	p.server.send(response)
+	// run in go routine so we do not block
+
+	p.server.sugar.Infow("got append entries response", "peer", p.id, "request", request)
+
+	go func() {
+		defer p.server.sugar.Infow("handled append entries response", "peer", p.id, "request", request)
+		p.server.send(response)
+	}()
 }
 
 func (p *peer) StartHeartbeat() {
@@ -83,6 +88,7 @@ func (p *peer) StopHeartbeat(flush bool) {
 
 func (p *peer) Flush() {
 	p.server.sugar.Infow("flushing peer", "peer", p.id)
+	p.server.sugar.Infow("finished flushing peer", "peer", p.id)
 
 	// TODO prevlogindex and prevlogterm
 

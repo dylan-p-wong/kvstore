@@ -1,7 +1,6 @@
 package service
 
 import (
-	"math"
 	"time"
 
 	pb "github.com/dylan-p-wong/kvstore/api"
@@ -26,7 +25,7 @@ func (s *Server) send(command interface{}) (interface{}, error) {
 		ResponseChannel: channel,
 	}
 
-	s.sugar.Infow("SENDING TO EVENT LOOP", "command", command)
+	s.sugar.Infow("SENDING TO EVENT LOOP", "command", command, "state", s.raftState.state)
 	s.events <- rpc
 
 	response := <-channel
@@ -54,12 +53,12 @@ func (s *Server) loop() {
 func (s *Server) followerLoop() {
 	s.sugar.Infow("starting follower event loop")
 
-	// should be random between an interval
-	timeoutChannel := time.After(s.electionTimeout)
-
 	// follower event loop
 	s.sugar.Infow("waiting for events", "state", "FOLLOWER")
 	for s.raftState.state == FOLLOWER {
+		// should be random between an interval
+		timeoutChannel := time.After(s.electionTimeout)
+
 		select {
 		case <-s.stopped:
 			return
@@ -111,8 +110,8 @@ func (s *Server) candidateLoop() {
 					p.SendVoteRequest(&pb.RequestVoteRequest{
 						Term:         uint64(s.raftState.currentTerm),
 						CandidateId:  uint64(s.id),
-						LastLogIndex: 0, // TODOD
-						LastLogTerm:  0,
+						LastLogIndex: 0, // TODO
+						LastLogTerm:  0, // TODO
 					}, requestVoteResponseChannel)
 				}(p)
 			}
@@ -122,7 +121,7 @@ func (s *Server) candidateLoop() {
 			doVote = false
 		}
 
-		if votesGranted == int(math.Ceil((float64(len(s.peers)+1))/2)) {
+		if votesGranted == (len(s.peers)+1)/2+1 {
 			s.sugar.Infow("candidate promoted to leader", "votes_granted", votesGranted)
 			s.raftState.state = LEADER
 			return
@@ -186,7 +185,6 @@ func (s *Server) leaderLoop() {
 		s.send(&pb.PutRequest{})
 	}()
 
-
 	// leader event loop
 	s.sugar.Infow("waiting for events", "state", "LEADER")
 	for s.raftState.state == LEADER {
@@ -214,59 +212,30 @@ func (s *Server) leaderLoop() {
 			case *pb.AppendEntriesResponse:
 				s.sugar.Infow("recieved append entries response", "state", "LEADER")
 				s.processAppendEntriesResponse(event.Command.(*pb.AppendEntriesResponse))
+				// Signal to a send we are done
+				event.ResponseChannel <- RPCResponse{}
 			}
 		}
 	}
 }
 
 func (s *Server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) RPCResponse {
+	s.sugar.Infow("processing append entries request", "request", request)
+
 	var response RPCResponse
 	response.Error = nil
 
-	// 1.
-	if request.Term < uint64(s.raftState.currentTerm) {
-		response.Response = &pb.AppendEntriesResponse{
-			Term:    uint64(s.raftState.currentTerm),
-			Success: false,
-		}
-		return response
-	}
-
-	if request.Term == uint64(s.raftState.currentTerm) {
+	if s.raftState.currentTerm <= int(request.Term) {
 		if s.raftState.state == CANDIDATE {
+			s.sugar.Infow("stepping down to follower")
 			s.raftState.state = FOLLOWER
 		}
-
-		s.leader = int(request.LeaderId)
 	} else {
-		s.updateCurrentTerm(int(request.Term), int(request.LeaderId))
-	}
-
-	// 2.
-	found := request.PrevLogIndex == 0
-	for _, logEntry := range s.raftState.log {
-		if logEntry.index == int(request.PrevLogIndex) && logEntry.term == int(request.PrevLogTerm) {
-			found = true
-		}
-	}
-
-	if !found {
 		response.Response = &pb.AppendEntriesResponse{
 			Term:    uint64(s.raftState.currentTerm),
 			Success: false,
 		}
 		return response
-	}
-
-	// TODO
-
-	// 5.
-	if request.LeaderCommit > uint64(s.raftState.commitIndex) {
-		if int(request.LeaderCommit) < len(s.raftState.log)-1 {
-			s.raftState.commitIndex = int(request.LeaderCommit)
-		} else {
-			s.raftState.commitIndex = len(s.raftState.log)
-		}
 	}
 
 	response.Response = &pb.AppendEntriesResponse{
@@ -278,12 +247,13 @@ func (s *Server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) R
 }
 
 func (s *Server) processAppendEntriesResponse(response *pb.AppendEntriesResponse) {
-
+	s.sugar.Infow("processing append entries response", "response", response)
 }
 
 // called when we find a higher term from a peer
 func (s *Server) updateCurrentTerm(term int, leaderId int) {
 
+	s.sugar.Infow("updating term", "currentTerm", s.raftState.currentTerm, "newTerm", term)
 	if s.raftState.state == LEADER {
 		for _, p := range s.peers {
 			p.StopHeartbeat(false)
@@ -294,10 +264,12 @@ func (s *Server) updateCurrentTerm(term int, leaderId int) {
 
 	s.raftState.currentTerm = term
 	s.leader = leaderId
-	s.raftState.votedFor = -1
+	s.raftState.votedFor = leaderId
 }
 
 func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCResponse {
+	s.sugar.Infow("processing request vote request", "request", request)
+
 	var response RPCResponse
 	response.Error = nil
 
@@ -309,9 +281,7 @@ func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCRe
 		return response
 	}
 
-	if request.Term > uint64(s.raftState.currentTerm) {
-		s.updateCurrentTerm(int(request.Term), int(request.CandidateId))
-	} else if s.raftState.votedFor != -1 && s.raftState.votedFor != s.id {
+	if s.raftState.votedFor != -1 || s.raftState.votedFor == s.id {
 		response.Response = &pb.RequestVoteResponse{
 			Term:        uint64(s.raftState.currentTerm),
 			VoteGranted: false,
@@ -319,13 +289,7 @@ func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCRe
 		return response
 	}
 
-	if !s.candidateLogUpToDate(request) {
-		response.Response = &pb.RequestVoteResponse{
-			Term:        uint64(s.raftState.currentTerm),
-			VoteGranted: false,
-		}
-		return response
-	}
+	s.updateCurrentTerm(int(request.Term), int(request.CandidateId))
 
 	response.Response = &pb.RequestVoteResponse{
 		Term:        uint64(s.raftState.currentTerm),
@@ -334,11 +298,9 @@ func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCRe
 	return response
 }
 
-func (s *Server) candidateLogUpToDate(request *pb.RequestVoteRequest) bool {
-	return true
-}
-
 func (s *Server) processPutRequest(request *pb.PutRequest, responseChannel chan<- RPCResponse) {
+	s.sugar.Infow("processing PUT request", "request", request)
+
 	nextIndex := s.getCurrentLogIndex() + 1
 
 	entry := newLogEntry(s.raftState.currentTerm, nextIndex, string(request.Key), string(request.Value))
@@ -346,6 +308,7 @@ func (s *Server) processPutRequest(request *pb.PutRequest, responseChannel chan<
 	err := s.appendLogEntry(entry)
 
 	if err != nil {
+		s.sugar.Infow("error appending entry to log", err)
 		responseChannel <- RPCResponse{
 			Error: err,
 		}
