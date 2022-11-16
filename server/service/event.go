@@ -25,11 +25,9 @@ func (s *Server) send(command interface{}) (interface{}, error) {
 		ResponseChannel: channel,
 	}
 
-	s.sugar.Infow("SENDING TO EVENT LOOP", "command", command, "state", s.raftState.state)
 	s.events <- rpc
 
 	response := <-channel
-	s.sugar.Infow("GOT RESPONSE FROM EVENT LOOP", "command", command)
 
 	if response.Error != nil {
 		return nil, response.Error
@@ -40,12 +38,12 @@ func (s *Server) send(command interface{}) (interface{}, error) {
 
 func (s *Server) loop() {
 	for s.raftState.state != STOPPED {
-		if s.raftState.state == LEADER {
-			s.leaderLoop()
-		} else if s.raftState.state == FOLLOWER {
+		if s.raftState.state == FOLLOWER {
 			s.followerLoop()
 		} else if s.raftState.state == CANDIDATE {
 			s.candidateLoop()
+		} else if s.raftState.state == LEADER {
+			s.leaderLoop()
 		}
 	}
 }
@@ -81,8 +79,6 @@ func (s *Server) followerLoop() {
 
 func (s *Server) candidateLoop() {
 	s.sugar.Infow("starting candidate event loop")
-
-	s.leader = -1
 
 	doVote := true
 	votesGranted := 0
@@ -158,18 +154,6 @@ func (s *Server) candidateLoop() {
 	}
 }
 
-func (s *Server) processRequestVoteResponse(response *pb.RequestVoteResponse) bool {
-	if response.VoteGranted && response.Term == uint64(s.raftState.currentTerm) {
-		return true
-	}
-
-	if response.Term > uint64(s.raftState.currentTerm) {
-		s.updateCurrentTerm(int(response.Term), -1)
-	}
-
-	return false
-}
-
 func (s *Server) leaderLoop() {
 	s.sugar.Infow("starting leader event loop")
 
@@ -219,8 +203,91 @@ func (s *Server) leaderLoop() {
 	}
 }
 
+func (s *Server) handleAllServerRequestResponseRules(term int) {
+	// see rules for all servers in raft paper
+	if term > s.raftState.currentTerm {
+		if s.raftState.state == LEADER {
+			for _, p := range s.peers {
+				p.StopHeartbeat(false)
+			}
+		}
+		s.raftState.state = FOLLOWER
+		s.raftState.currentTerm = int(term)		
+	}
+}
+
+
+func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCResponse {
+	s.sugar.Infow("processing request vote request", "request", request)
+	s.handleAllServerRequestResponseRules(int(request.Term))
+
+	var response RPCResponse
+	response.Error = nil
+
+
+	// reply false if term < currentTerm
+	if request.Term < uint64(s.raftState.currentTerm) {
+		response.Response = &pb.RequestVoteResponse{
+			Term:        uint64(s.raftState.currentTerm),
+			VoteGranted: false,
+		}
+		return response
+	}
+
+	// if votedFor is null or candidateId AND TODO(candidate log is at least as up to date as reciever log) grant vote
+	if s.raftState.votedFor == -1 || s.raftState.votedFor != s.id {
+		s.raftState.votedFor = int(request.CandidateId)
+
+		response.Response = &pb.RequestVoteResponse{
+			Term:        uint64(s.raftState.currentTerm),
+			VoteGranted: true,
+		}
+		return response
+	}
+	
+	response.Response = &pb.RequestVoteResponse{
+		Term:        uint64(s.raftState.currentTerm),
+		VoteGranted: false,
+	}
+	return response
+}
+
+func (s *Server) processPutRequest(request *pb.PutRequest, responseChannel chan<- RPCResponse) {
+	s.sugar.Infow("processing PUT request", "request", request)
+
+	nextIndex := s.getCurrentLogIndex() + 1
+
+	entry := newLogEntry(s.raftState.currentTerm, nextIndex, string(request.Key), string(request.Value))
+
+	err := s.appendLogEntry(entry)
+
+	if err != nil {
+		s.sugar.Infow("error appending entry to log", err)
+		responseChannel <- RPCResponse{
+			Error: err,
+		}
+	}
+
+	if len(s.peers) == 0 {
+		s.raftState.commitIndex = s.getCurrentLogIndex()
+	}
+}
+
+func (s *Server) processRequestVoteResponse(response *pb.RequestVoteResponse) bool {
+	s.sugar.Infow("processing request vote response", "response", response)
+	s.handleAllServerRequestResponseRules(int(response.Term))
+
+	if response.VoteGranted && response.Term == uint64(s.raftState.currentTerm) {
+		return true
+	}
+
+	return false
+}
+
+
 func (s *Server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) RPCResponse {
 	s.sugar.Infow("processing append entries request", "request", request)
+	s.handleAllServerRequestResponseRules(int(request.Term))
 
 	var response RPCResponse
 	response.Error = nil
@@ -248,73 +315,5 @@ func (s *Server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) R
 
 func (s *Server) processAppendEntriesResponse(response *pb.AppendEntriesResponse) {
 	s.sugar.Infow("processing append entries response", "response", response)
-}
-
-// called when we find a higher term from a peer
-func (s *Server) updateCurrentTerm(term int, leaderId int) {
-
-	s.sugar.Infow("updating term", "currentTerm", s.raftState.currentTerm, "newTerm", term)
-	if s.raftState.state == LEADER {
-		for _, p := range s.peers {
-			p.StopHeartbeat(false)
-		}
-	}
-
-	s.raftState.state = FOLLOWER
-
-	s.raftState.currentTerm = term
-	s.leader = leaderId
-	s.raftState.votedFor = leaderId
-}
-
-func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCResponse {
-	s.sugar.Infow("processing request vote request", "request", request)
-
-	var response RPCResponse
-	response.Error = nil
-
-	if request.Term < uint64(s.raftState.currentTerm) {
-		response.Response = &pb.RequestVoteResponse{
-			Term:        uint64(s.raftState.currentTerm),
-			VoteGranted: false,
-		}
-		return response
-	}
-
-	if s.raftState.votedFor != -1 || s.raftState.votedFor == s.id {
-		response.Response = &pb.RequestVoteResponse{
-			Term:        uint64(s.raftState.currentTerm),
-			VoteGranted: false,
-		}
-		return response
-	}
-
-	s.updateCurrentTerm(int(request.Term), int(request.CandidateId))
-
-	response.Response = &pb.RequestVoteResponse{
-		Term:        uint64(s.raftState.currentTerm),
-		VoteGranted: true,
-	}
-	return response
-}
-
-func (s *Server) processPutRequest(request *pb.PutRequest, responseChannel chan<- RPCResponse) {
-	s.sugar.Infow("processing PUT request", "request", request)
-
-	nextIndex := s.getCurrentLogIndex() + 1
-
-	entry := newLogEntry(s.raftState.currentTerm, nextIndex, string(request.Key), string(request.Value))
-
-	err := s.appendLogEntry(entry)
-
-	if err != nil {
-		s.sugar.Infow("error appending entry to log", err)
-		responseChannel <- RPCResponse{
-			Error: err,
-		}
-	}
-
-	if len(s.peers) == 0 {
-		s.raftState.commitIndex = s.getCurrentLogIndex()
-	}
+	s.handleAllServerRequestResponseRules(int(response.Term))
 }
