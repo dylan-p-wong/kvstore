@@ -56,12 +56,9 @@ func (p *peer) SendAppendEntriesRequest(request *pb.AppendEntriesRequest) {
 		return
 	}
 
-	// TODO
-
-	// run in go routine so we do not block
-
 	p.server.sugar.Infow("got append entries response", "peer", p.id, "request", request)
-
+	
+	// run in go routine so we do not block
 	go func() {
 		defer p.server.sugar.Infow("handled append entries response", "peer", p.id, "request", request)
 		p.server.send(response)
@@ -88,13 +85,11 @@ func (p *peer) Flush() {
 	p.server.sugar.Infow("flushing peer", "peer", p.id)
 	p.server.sugar.Infow("finished flushing peer", "peer", p.id)
 
-	// TODO prevlogindex and prevlogterm
-
 	p.SendAppendEntriesRequest(&pb.AppendEntriesRequest{
 		Term:         uint64(p.server.raftState.currentTerm),
 		LeaderId:     uint64(p.server.id),
-		PrevLogIndex: 0,
-		PrevLogTerm:  0,
+		PrevLogIndex: uint64(p.server.GetPrevLogIndex()),
+		PrevLogTerm:  uint64(p.server.GetPrevLogTerm()),
 		Entries:      make([]*pb.LogEntry, 0),
 		LeaderCommit: uint64(p.server.raftState.commitIndex),
 	})

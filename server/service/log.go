@@ -4,17 +4,17 @@ import "errors"
 
 type LogEntry struct {
 	term  int
-	key   string
-	value string
 	index int
+	command string
+	responseChannel chan RPCResponse
 }
 
-func newLogEntry(term int, index int, key string, value string) LogEntry {
+func newLogEntry(term int, index int, command string, responseChannel chan RPCResponse) LogEntry {
 	return LogEntry{
 		term:  term,
-		key:   key,
-		value: value,
 		index: index,
+		command: command,
+		responseChannel: responseChannel,
 	}
 }
 

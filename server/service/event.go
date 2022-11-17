@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"time"
 
 	pb "github.com/dylan-p-wong/kvstore/api"
@@ -166,7 +167,16 @@ func (s *Server) leaderLoop() {
 	s.routineGroup.Add(1)
 	go func() {
 		defer s.routineGroup.Done()
-		s.send(&pb.PutRequest{})
+		for _, p := range s.peers {
+			go p.SendAppendEntriesRequest(&pb.AppendEntriesRequest{
+				Term: uint64(s.raftState.currentTerm),
+				LeaderId: uint64(s.id),
+				PrevLogIndex: uint64(s.GetPrevLogIndex()),
+				PrevLogTerm: uint64(s.GetPrevLogTerm()),
+				Entries: make([]*pb.LogEntry, 0),
+				LeaderCommit: uint64(s.raftState.commitIndex),
+			})
+		}
 	}()
 
 	// leader event loop
@@ -252,19 +262,19 @@ func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCRe
 	return response
 }
 
-func (s *Server) processPutRequest(request *pb.PutRequest, responseChannel chan<- RPCResponse) {
+func (s *Server) processPutRequest(request *pb.PutRequest, responseChannel chan RPCResponse) {
 	s.sugar.Infow("processing PUT request", "request", request)
 
 	nextIndex := s.getCurrentLogIndex() + 1
 
-	entry := newLogEntry(s.raftState.currentTerm, nextIndex, string(request.Key), string(request.Value))
+	entry := newLogEntry(s.raftState.currentTerm, nextIndex, string(request.Key) + ":" + string(request.Value), responseChannel)
 
 	err := s.appendLogEntry(entry)
 
 	if err != nil {
 		s.sugar.Infow("error appending entry to log", err)
 		responseChannel <- RPCResponse{
-			Error: err,
+			Error: errors.New("error appending entry to log"),
 		}
 	}
 

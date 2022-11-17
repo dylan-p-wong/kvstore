@@ -37,8 +37,8 @@ type RaftState struct {
 	commitIndex int
 	lastApplied int
 	// Volatile state (LEADERS)
-	nextIndex  []int
-	matchIndex []int
+	nextIndex  map[int]int
+	matchIndex map[int]int
 }
 
 type Server struct {
@@ -67,8 +67,8 @@ func NewServer(id int, url string, sugar *zap.SugaredLogger) *Server {
 		log:         make([]*LogEntry, 0),
 		commitIndex: 0,
 		lastApplied: 0,
-		nextIndex:   make([]int, 0),
-		matchIndex:  make([]int, 0),
+		nextIndex:   make(map[int]int),
+		matchIndex:  make(map[int]int),
 	}
 
 	s := &Server{
@@ -202,4 +202,15 @@ func (s *Server) RemovePeer(id int) error {
 	delete(s.peers, id)
 
 	return nil
+}
+
+
+func (s *Server) GetPrevLogIndex() int {
+	// TODO
+	return 0
+}
+
+func (s *Server) GetPrevLogTerm() int {
+	// TODO
+	return 0
 }
