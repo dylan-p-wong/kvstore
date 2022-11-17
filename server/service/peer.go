@@ -12,7 +12,6 @@ import (
 type peer struct {
 	id                int
 	url               string
-	clientConnection  *grpc.ClientConn
 	client            pb.KVClient
 	heartbeatInterval time.Duration
 
@@ -30,7 +29,6 @@ func NewPeer(id int, url string, heartbeatInterval time.Duration, server *Server
 	return &peer{
 		id:                id,
 		url:               url,
-		clientConnection:  connection,
 		client:            pb.NewKVClient(connection),
 		heartbeatInterval: heartbeatInterval,
 		server:            server,
@@ -97,7 +95,7 @@ func (p *peer) Flush() {
 		LeaderId:     uint64(p.server.id),
 		PrevLogIndex: 0,
 		PrevLogTerm:  0,
-		Entries:      make([][]byte, 0),
+		Entries:      make([]*pb.LogEntry, 0),
 		LeaderCommit: uint64(p.server.raftState.commitIndex),
 	})
 }

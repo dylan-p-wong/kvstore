@@ -34,12 +34,18 @@ message GetResponse {
   bytes value = 3;
 }
 
+message LogEntry {
+	uint64 Index = 1;
+	uint64 Term = 2;
+	string CommandName = 3;
+}
+
 message AppendEntriesRequest {
   uint64 term = 1;
   uint64 leaderId = 2;
   uint64 prevLogIndex = 3;
   uint64 prevLogTerm = 4;
-  repeated bytes entries = 5;
+  repeated LogEntry entries = 5;
   uint64 leaderCommit = 6;
 }
 
