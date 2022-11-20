@@ -111,6 +111,8 @@ func (s *Server) Start() error {
 		s.loop()
 	}()
 
+	go s.MonitorState()
+
 	s.sugar.Infow("server started")
 	return nil
 }
@@ -118,13 +120,15 @@ func (s *Server) Start() error {
 func (s *Server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, error) {
 	s.sugar.Infow("received PUT request", "request", in)
 
-	response, err := s.send(in)
+	_, err := s.send(in)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return response.(*pb.PutResponse), nil
+	return &pb.PutResponse{
+		Success: true,
+	}, nil
 }
 
 func (s *Server) Get(ctx context.Context, in *pb.GetRequest) (*pb.GetResponse, error) {
@@ -204,13 +208,17 @@ func (s *Server) RemovePeer(id int) error {
 	return nil
 }
 
+func (s *Server) MonitorState() {
+	ticker := time.NewTicker(2000 * time.Millisecond)
 
-func (s *Server) GetPrevLogIndex() int {
-	// TODO
-	return 0
+	for {
+		select {
+		case <-ticker.C:
+			s.LogState()
+		}
+	}
 }
 
-func (s *Server) GetPrevLogTerm() int {
-	// TODO
-	return 0
+func (s *Server) LogState() {
+	s.sugar.Infow("server state", "commitIndex", s.raftState.commitIndex, "lastApplied", s.raftState.lastApplied, "nextIndex", s.raftState.nextIndex, "matchIndex", s.raftState.matchIndex, "log", s.raftState.log)
 }

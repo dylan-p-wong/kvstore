@@ -48,6 +48,10 @@ func (p *peer) SendVoteRequest(request *pb.RequestVoteRequest, requestVoteRespon
 }
 
 func (p *peer) SendAppendEntriesRequest(request *pb.AppendEntriesRequest) {
+	// set match index for itself
+	p.server.raftState.matchIndex[p.server.id] = int(request.PrevLogIndex) + len(request.Entries)
+	p.server.raftState.nextIndex[p.server.id] = p.server.raftState.matchIndex[p.server.id] + 1
+	
 	p.server.sugar.Infow("sending append entries request", "peer", p.id, "request", request)
 	response, err := p.client.AppendEntries(context.Background(), request)
 
@@ -82,34 +86,85 @@ func (p *peer) StopHeartbeat(flush bool) {
 }
 
 func (p *peer) Flush() {
-	p.server.sugar.Infow("flushing peer", "peer", p.id)
-	p.server.sugar.Infow("finished flushing peer", "peer", p.id)
+	nextIndex := p.server.raftState.nextIndex[p.id]
+
+	p.server.sugar.Infow("flushing peer", "peer", p.id, "nextIndex", nextIndex)
+	defer p.server.sugar.Infow("finished flushing peer", "peer", p.id)
+
+	entries := make([]*pb.LogEntry, 0)
+
+	for _, le := range p.server.raftState.log {
+		if le.index >=  nextIndex {
+			entries = append(entries, &pb.LogEntry{
+				Index: uint64(le.index),
+				Term: uint64(le.term),
+				CommandName: le.command,
+			})
+		}
+	}
 
 	p.SendAppendEntriesRequest(&pb.AppendEntriesRequest{
 		Term:         uint64(p.server.raftState.currentTerm),
 		LeaderId:     uint64(p.server.id),
-		PrevLogIndex: uint64(p.server.GetPrevLogIndex()),
-		PrevLogTerm:  uint64(p.server.GetPrevLogTerm()),
-		Entries:      make([]*pb.LogEntry, 0),
+		PrevLogIndex: uint64(p.GetPrevLogIndex(nextIndex)),
+		PrevLogTerm:  uint64(p.GetPrevLogTerm(nextIndex)),
+		Entries:      entries,
 		LeaderCommit: uint64(p.server.raftState.commitIndex),
 	})
 }
 
 // Listens to the heartbeat timeout and flushes an AppendEntries RPC
 func (p *peer) Heartbeat() {
-	ticker := time.Tick(p.heartbeatInterval)
+	ticker := time.NewTicker(p.heartbeatInterval)
 
 	for {
 		select {
 		case flush := <-p.stopChannel:
+			ticker.Stop()
 			p.server.sugar.Infow("heartbeat stopped", "peer", p.id, "flush", flush)
 			if flush {
 				p.Flush()
 				return
 			}
-		case <-ticker:
+		case <-ticker.C:
 			p.server.sugar.Infow("heartbeat timeout elapsed", "peer", p.id)
 			p.Flush()
 		}
 	}
+}
+
+func (p *peer) GetPrevLogTerm(nextIndex int) int {
+	if len(p.server.raftState.log) == 0 {
+		return 0
+	}
+
+	index := nextIndex - 1
+
+	if index - 1 >= len(p.server.raftState.log) {
+		p.server.sugar.Infow("erroring getting prev log term")
+	}
+
+	if index - 1 < 0 {
+		return 0
+	}
+
+	return p.server.raftState.log[index - 1].term
+}
+
+func (p *peer) GetPrevLogIndex(nextIndex int) int {
+	if len(p.server.raftState.log) == 0 {
+		return 0
+	}
+
+	index := nextIndex - 1
+
+	if index - 1 >= len(p.server.raftState.log) {
+		p.server.sugar.Infow("erroring getting prev log term")
+	}
+
+	if index - 1 < 0 {
+		return 0
+	}
+
+	return p.server.raftState.log[index - 1].index
 }

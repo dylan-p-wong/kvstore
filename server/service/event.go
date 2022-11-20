@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"sort"
 	"time"
 
 	pb "github.com/dylan-p-wong/kvstore/api"
@@ -155,8 +156,26 @@ func (s *Server) candidateLoop() {
 	}
 }
 
+func (s *Server) GetLastLogIndex() int {
+	if len(s.raftState.log) == 0 {
+		return 0
+	}
+
+	return len(s.raftState.log)
+}
+
 func (s *Server) leaderLoop() {
 	s.sugar.Infow("starting leader event loop")
+
+	// see voliatile state on leaders
+	// we initialize nextIndex to leader last log index + 1
+	// we initialize matchIndex to 0
+	for _, p := range s.peers {
+		s.raftState.nextIndex[p.id] = s.GetLastLogIndex() + 1
+		s.raftState.matchIndex[p.id] = 0
+	}
+	s.raftState.nextIndex[s.id] = s.getCurrentLogIndex() + 1
+	s.raftState.matchIndex[s.id] = 0
 
 	s.sugar.Infow("starting peer heatbeats", "peers", s.peers)
 	for _, p := range s.peers {
@@ -169,11 +188,11 @@ func (s *Server) leaderLoop() {
 		defer s.routineGroup.Done()
 		for _, p := range s.peers {
 			go p.SendAppendEntriesRequest(&pb.AppendEntriesRequest{
-				Term: uint64(s.raftState.currentTerm),
-				LeaderId: uint64(s.id),
-				PrevLogIndex: uint64(s.GetPrevLogIndex()),
-				PrevLogTerm: uint64(s.GetPrevLogTerm()),
-				Entries: make([]*pb.LogEntry, 0),
+				Term:         uint64(s.raftState.currentTerm),
+				LeaderId:     uint64(s.id),
+				PrevLogIndex: uint64(p.GetPrevLogIndex(s.raftState.nextIndex[p.id])),
+				PrevLogTerm:  uint64(p.GetPrevLogTerm(s.raftState.nextIndex[p.id])),
+				Entries:      make([]*pb.LogEntry, 0),
 				LeaderCommit: uint64(s.raftState.commitIndex),
 			})
 		}
@@ -222,10 +241,9 @@ func (s *Server) handleAllServerRequestResponseRules(term int) {
 			}
 		}
 		s.raftState.state = FOLLOWER
-		s.raftState.currentTerm = int(term)		
+		s.raftState.currentTerm = int(term)
 	}
 }
-
 
 func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCResponse {
 	s.sugar.Infow("processing request vote request", "request", request)
@@ -233,7 +251,6 @@ func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCRe
 
 	var response RPCResponse
 	response.Error = nil
-
 
 	// reply false if term < currentTerm
 	if request.Term < uint64(s.raftState.currentTerm) {
@@ -254,7 +271,7 @@ func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCRe
 		}
 		return response
 	}
-	
+
 	response.Response = &pb.RequestVoteResponse{
 		Term:        uint64(s.raftState.currentTerm),
 		VoteGranted: false,
@@ -267,9 +284,11 @@ func (s *Server) processPutRequest(request *pb.PutRequest, responseChannel chan 
 
 	nextIndex := s.getCurrentLogIndex() + 1
 
-	entry := newLogEntry(s.raftState.currentTerm, nextIndex, string(request.Key) + ":" + string(request.Value), responseChannel)
+	entry := newLogEntry(s.raftState.currentTerm, nextIndex, string(request.Key)+":"+string(request.Value), responseChannel)
 
 	err := s.appendLogEntry(entry)
+
+	s.sugar.Infow("appended log entry to log", "index", entry.index, "term", entry.term, "command", entry.command)
 
 	if err != nil {
 		s.sugar.Infow("error appending entry to log", err)
@@ -294,7 +313,6 @@ func (s *Server) processRequestVoteResponse(response *pb.RequestVoteResponse) bo
 	return false
 }
 
-
 func (s *Server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) RPCResponse {
 	s.sugar.Infow("processing append entries request", "request", request)
 	s.handleAllServerRequestResponseRules(int(request.Term))
@@ -302,22 +320,90 @@ func (s *Server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) R
 	var response RPCResponse
 	response.Error = nil
 
-	if s.raftState.currentTerm <= int(request.Term) {
-		if s.raftState.state == CANDIDATE {
-			s.sugar.Infow("stepping down to follower")
-			s.raftState.state = FOLLOWER
-		}
-	} else {
+	// 1. reply false if term < currentTerm
+	if int(request.Term) < s.raftState.currentTerm {
+		s.sugar.Infow("append entries failed", "step", 1)
 		response.Response = &pb.AppendEntriesResponse{
 			Term:    uint64(s.raftState.currentTerm),
 			Success: false,
+			ServerId: uint64(s.id),
+			PrevLogIndex: request.PrevLogIndex,
+			Entries: request.Entries,
 		}
 		return response
+	}
+
+	// 2. reply false if log does not contain an entry at prevLogIndex
+	found := request.PrevLogIndex == 0
+	for _, le := range s.raftState.log {
+		if le.index == int(request.PrevLogIndex) && le.term == int(request.Term) {
+			found = true
+		}
+	}
+	if !found {
+		s.sugar.Infow("append entries failed", "step", 2)
+		response.Response = &pb.AppendEntriesResponse{
+			Term:    uint64(s.raftState.currentTerm),
+			Success: false,
+			ServerId: uint64(s.id),
+			PrevLogIndex: request.PrevLogIndex,
+			Entries: request.Entries,
+		}
+		return response
+	}
+
+	// 3. if an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it
+	// TODO: make faster. Could there be an invalid iterator?
+	for i, le := range s.raftState.log {
+		for _, rle := range request.Entries {
+			if rle.Index == uint64(le.index) && rle.Term != uint64(le.term) {
+				s.raftState.log = s.raftState.log[:i]
+			}
+		}
+	}
+
+	// 4. append any new entries not already in log
+	// TODO: revisit and make faster
+	for _, rle := range request.Entries {
+		duplicate := false
+		for _, le := range s.raftState.log {
+			if int(rle.Index) == le.index {
+				duplicate = true
+			}
+		}
+
+		if !duplicate {
+			newLe := newLogEntry(int(rle.Term), int(rle.Index), rle.CommandName, make(chan RPCResponse))
+			s.raftState.log = append(s.raftState.log, &newLe)
+		}
+	}
+
+	// 5. if leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+	// TODO: revisit and make faster
+	lastEntryIndex := 0
+	for _, le := range s.raftState.log {
+		if le.index > lastEntryIndex {
+			lastEntryIndex = le.index
+		}
+	}
+	if request.LeaderCommit < uint64(lastEntryIndex) {
+		s.raftState.commitIndex = int(request.LeaderCommit)
+	} else {
+		s.raftState.commitIndex = lastEntryIndex
+	}
+
+	// see all servers bullet 2
+	for s.raftState.lastApplied < s.raftState.commitIndex {
+		// SYNC lastApplied + 1 to DISK
+		s.raftState.lastApplied++
 	}
 
 	response.Response = &pb.AppendEntriesResponse{
 		Term:    uint64(s.raftState.currentTerm),
 		Success: true,
+		ServerId: uint64(s.id),
+		PrevLogIndex: request.PrevLogIndex,
+		Entries: request.Entries,
 	}
 
 	return response
@@ -326,4 +412,47 @@ func (s *Server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) R
 func (s *Server) processAppendEntriesResponse(response *pb.AppendEntriesResponse) {
 	s.sugar.Infow("processing append entries response", "response", response)
 	s.handleAllServerRequestResponseRules(int(response.Term))
+	// if handleAllServerRequestResponseRules changed state
+	if s.raftState.state != LEADER {
+		return
+	}
+
+	// see leaders bullet 5
+	// if AppendEntries fails because of log inconsistency: decrement nextIndex and retry
+	// retry will be done on the next peer heartbeat since we are not updating the nextIndex
+	if response.Success == false {
+		s.raftState.nextIndex[int(response.ServerId)]--
+		return
+	}
+
+	// see leaders bullet 4
+	// if successful: update nextIndex and matchIndex for follower
+	s.raftState.matchIndex[int(response.ServerId)] = int(response.PrevLogIndex) + len(response.Entries)
+	s.raftState.nextIndex[int(response.ServerId)] = s.raftState.matchIndex[int(response.ServerId)] + 1
+
+	// see leaders bullet 6
+	// if there exists an N such that N > commitIndex, a majority of matchIndex[i] >= N, and log[N].term == currentTerm: set commitIndex = N
+	// see leaders bullet 2
+	// apply entries to state machine then update commited index
+	// we must then send a response on the log entry response channel
+	
+	matchIndexes := make([]int, 0)
+	for _, v := range s.raftState.matchIndex { 
+		matchIndexes = append(matchIndexes, v)
+	}
+	sort.Ints(matchIndexes)
+
+	commitedIndex := matchIndexes[(len(s.peers)+1)/2+1-1]
+
+	if commitedIndex > s.raftState.commitIndex {
+		if s.raftState.log[commitedIndex - 1].term == s.raftState.currentTerm {
+			s.raftState.commitIndex = matchIndexes[(len(s.peers)+1)/2+1-1]
+			// SYNC
+			s.raftState.lastApplied = s.raftState.commitIndex // TODO: is this right?
+			// reply to waiting channel that the command has been replicated
+			s.raftState.log[commitedIndex - 1].responseChannel <- RPCResponse{
+				Error: nil,
+			}
+		}		
+	}
 }
