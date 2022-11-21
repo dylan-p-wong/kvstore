@@ -18,7 +18,7 @@ type RPCRequest struct {
 	ResponseChannel chan RPCResponse
 }
 
-// Sends to event loop
+// sends to event loop
 func (s *Server) send(command interface{}) (interface{}, error) {
 	channel := make(chan RPCResponse, 1)
 
@@ -156,14 +156,6 @@ func (s *Server) candidateLoop() {
 	}
 }
 
-func (s *Server) GetLastLogIndex() int {
-	if len(s.raftState.log) == 0 {
-		return 0
-	}
-
-	return len(s.raftState.log)
-}
-
 func (s *Server) leaderLoop() {
 	s.sugar.Infow("starting leader event loop")
 
@@ -174,7 +166,7 @@ func (s *Server) leaderLoop() {
 		s.raftState.nextIndex[p.id] = s.GetLastLogIndex() + 1
 		s.raftState.matchIndex[p.id] = 0
 	}
-	s.raftState.nextIndex[s.id] = s.getCurrentLogIndex() + 1
+	s.raftState.nextIndex[s.id] = s.GetLastLogIndex() + 1
 	s.raftState.matchIndex[s.id] = 0
 
 	s.sugar.Infow("starting peer heatbeats", "peers", s.peers)
@@ -282,7 +274,7 @@ func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCRe
 func (s *Server) processPutRequest(request *pb.PutRequest, responseChannel chan RPCResponse) {
 	s.sugar.Infow("processing PUT request", "request", request)
 
-	nextIndex := s.getCurrentLogIndex() + 1
+	nextIndex := s.GetLastLogIndex() + 1
 
 	entry := newLogEntry(s.raftState.currentTerm, nextIndex, string(request.Key)+":"+string(request.Value), responseChannel)
 
@@ -297,8 +289,12 @@ func (s *Server) processPutRequest(request *pb.PutRequest, responseChannel chan 
 		}
 	}
 
+	// set match index for itself
+	s.raftState.matchIndex[s.id] = len(s.raftState.log)
+	s.raftState.nextIndex[s.id] = s.raftState.matchIndex[s.id] + 1
+
 	if len(s.peers) == 0 {
-		s.raftState.commitIndex = s.getCurrentLogIndex()
+		s.raftState.commitIndex = s.GetLastLogIndex()
 	}
 }
 
@@ -314,6 +310,8 @@ func (s *Server) processRequestVoteResponse(response *pb.RequestVoteResponse) bo
 }
 
 func (s *Server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) RPCResponse {
+	// we assume entries are sorted by index
+
 	s.sugar.Infow("processing append entries request", "request", request)
 	s.handleAllServerRequestResponseRules(int(request.Term))
 
@@ -324,41 +322,34 @@ func (s *Server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) R
 	if int(request.Term) < s.raftState.currentTerm {
 		s.sugar.Infow("append entries failed", "step", 1)
 		response.Response = &pb.AppendEntriesResponse{
-			Term:    uint64(s.raftState.currentTerm),
-			Success: false,
-			ServerId: uint64(s.id),
+			Term:         uint64(s.raftState.currentTerm),
+			Success:      false,
+			ServerId:     uint64(s.id),
 			PrevLogIndex: request.PrevLogIndex,
-			Entries: request.Entries,
+			Entries:      request.Entries,
 		}
 		return response
 	}
 
-	// 2. reply false if log does not contain an entry at prevLogIndex
-	found := request.PrevLogIndex == 0
-	for _, le := range s.raftState.log {
-		if le.index == int(request.PrevLogIndex) && le.term == int(request.Term) {
-			found = true
-		}
-	}
-	if !found {
+	// 2. reply false if log does not contain an entry at prevLogIndex whose term matches prevLogTerm
+	if len(s.raftState.log) < int(request.PrevLogIndex) || (request.PrevLogIndex > 0 && s.raftState.log[request.PrevLogIndex-1].term != int(request.PrevLogTerm)) {
+		// fails because of log inconsistency
 		s.sugar.Infow("append entries failed", "step", 2)
 		response.Response = &pb.AppendEntriesResponse{
-			Term:    uint64(s.raftState.currentTerm),
-			Success: false,
-			ServerId: uint64(s.id),
+			Term:         uint64(s.raftState.currentTerm),
+			Success:      false,
+			ServerId:     uint64(s.id),
 			PrevLogIndex: request.PrevLogIndex,
-			Entries: request.Entries,
+			Entries:      request.Entries,
 		}
 		return response
 	}
 
 	// 3. if an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it
-	// TODO: make faster. Could there be an invalid iterator?
-	for i, le := range s.raftState.log {
-		for _, rle := range request.Entries {
-			if rle.Index == uint64(le.index) && rle.Term != uint64(le.term) {
-				s.raftState.log = s.raftState.log[:i]
-			}
+	for _, rle := range request.Entries {
+		if len(s.raftState.log) >= int(rle.Index) && s.raftState.log[rle.Index-1].term != int(rle.Term) {
+			s.raftState.log = s.raftState.log[:(rle.Index - 1)]
+			break
 		}
 	}
 
@@ -379,31 +370,26 @@ func (s *Server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) R
 	}
 
 	// 5. if leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
-	// TODO: revisit and make faster
-	lastEntryIndex := 0
-	for _, le := range s.raftState.log {
-		if le.index > lastEntryIndex {
-			lastEntryIndex = le.index
+	if request.LeaderCommit > uint64(s.raftState.commitIndex) {
+		if int(request.LeaderCommit) < len(s.raftState.log) {
+			s.raftState.commitIndex = int(request.LeaderCommit)
+		} else {
+			s.raftState.commitIndex = len(s.raftState.log)
 		}
-	}
-	if request.LeaderCommit < uint64(lastEntryIndex) {
-		s.raftState.commitIndex = int(request.LeaderCommit)
-	} else {
-		s.raftState.commitIndex = lastEntryIndex
 	}
 
 	// see all servers bullet 2
 	for s.raftState.lastApplied < s.raftState.commitIndex {
-		// SYNC lastApplied + 1 to DISK
+		// TODO: sync s.raftState.log[lastApplied+1-1] to disk
 		s.raftState.lastApplied++
 	}
 
 	response.Response = &pb.AppendEntriesResponse{
-		Term:    uint64(s.raftState.currentTerm),
-		Success: true,
-		ServerId: uint64(s.id),
+		Term:         uint64(s.raftState.currentTerm),
+		Success:      true,
+		ServerId:     uint64(s.id),
 		PrevLogIndex: request.PrevLogIndex,
-		Entries: request.Entries,
+		Entries:      request.Entries,
 	}
 
 	return response
@@ -419,7 +405,7 @@ func (s *Server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 
 	// see leaders bullet 5
 	// if AppendEntries fails because of log inconsistency: decrement nextIndex and retry
-	// retry will be done on the next peer heartbeat since we are not updating the nextIndex
+	// retry will be done on the next peer heartbeat
 	if response.Success == false {
 		s.raftState.nextIndex[int(response.ServerId)]--
 		return
@@ -435,9 +421,8 @@ func (s *Server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 	// see leaders bullet 2
 	// apply entries to state machine then update commited index
 	// we must then send a response on the log entry response channel
-	
 	matchIndexes := make([]int, 0)
-	for _, v := range s.raftState.matchIndex { 
+	for _, v := range s.raftState.matchIndex {
 		matchIndexes = append(matchIndexes, v)
 	}
 	sort.Ints(matchIndexes)
@@ -445,14 +430,14 @@ func (s *Server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 	commitedIndex := matchIndexes[(len(s.peers)+1)/2+1-1]
 
 	if commitedIndex > s.raftState.commitIndex {
-		if s.raftState.log[commitedIndex - 1].term == s.raftState.currentTerm {
+		if s.raftState.log[commitedIndex-1].term == s.raftState.currentTerm {
 			s.raftState.commitIndex = matchIndexes[(len(s.peers)+1)/2+1-1]
-			// SYNC
-			s.raftState.lastApplied = s.raftState.commitIndex // TODO: is this right?
+			// TODO: sync log entry to disk
+			s.raftState.lastApplied = s.raftState.commitIndex
 			// reply to waiting channel that the command has been replicated
-			s.raftState.log[commitedIndex - 1].responseChannel <- RPCResponse{
+			s.raftState.log[commitedIndex-1].responseChannel <- RPCResponse{
 				Error: nil,
 			}
-		}		
+		}
 	}
 }

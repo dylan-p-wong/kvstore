@@ -18,13 +18,6 @@ func newLogEntry(term int, index int, command string, responseChannel chan RPCRe
 	}
 }
 
-func (s *Server) getCurrentLogIndex() int {
-	if len(s.raftState.log) == 0 {
-		return 0
-	}
-	return s.raftState.log[len(s.raftState.log)-1].index
-}
-
 func (s *Server) appendLogEntry(entry LogEntry) error {
 
 	if len(s.raftState.log) > 0 {
@@ -42,4 +35,13 @@ func (s *Server) appendLogEntry(entry LogEntry) error {
 	s.raftState.log = append(s.raftState.log, &entry)
 
 	return nil
+}
+
+// log is 1-indexed
+func (s *Server) GetLastLogIndex() int {
+	if len(s.raftState.log) == 0 {
+		return 0
+	}
+
+	return len(s.raftState.log)
 }

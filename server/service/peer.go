@@ -48,10 +48,6 @@ func (p *peer) SendVoteRequest(request *pb.RequestVoteRequest, requestVoteRespon
 }
 
 func (p *peer) SendAppendEntriesRequest(request *pb.AppendEntriesRequest) {
-	// set match index for itself
-	p.server.raftState.matchIndex[p.server.id] = int(request.PrevLogIndex) + len(request.Entries)
-	p.server.raftState.nextIndex[p.server.id] = p.server.raftState.matchIndex[p.server.id] + 1
-	
 	p.server.sugar.Infow("sending append entries request", "peer", p.id, "request", request)
 	response, err := p.client.AppendEntries(context.Background(), request)
 
@@ -61,7 +57,7 @@ func (p *peer) SendAppendEntriesRequest(request *pb.AppendEntriesRequest) {
 	}
 
 	p.server.sugar.Infow("got append entries response", "peer", p.id, "request", request)
-	
+
 	// run in go routine so we do not block
 	go func() {
 		defer p.server.sugar.Infow("handled append entries response", "peer", p.id, "request", request)
@@ -93,11 +89,12 @@ func (p *peer) Flush() {
 
 	entries := make([]*pb.LogEntry, 0)
 
+	// TODO: make faster by just removing entries from end
 	for _, le := range p.server.raftState.log {
-		if le.index >=  nextIndex {
+		if le.index >= nextIndex {
 			entries = append(entries, &pb.LogEntry{
-				Index: uint64(le.index),
-				Term: uint64(le.term),
+				Index:       uint64(le.index),
+				Term:        uint64(le.term),
 				CommandName: le.command,
 			})
 		}
@@ -115,6 +112,8 @@ func (p *peer) Flush() {
 
 // Listens to the heartbeat timeout and flushes an AppendEntries RPC
 func (p *peer) Heartbeat() {
+	// must use NewTicker so we can shut it down
+	// https://stackoverflow.com/questions/38856959/go-time-tick-vs-time-newticker
 	ticker := time.NewTicker(p.heartbeatInterval)
 
 	for {
@@ -134,37 +133,27 @@ func (p *peer) Heartbeat() {
 }
 
 func (p *peer) GetPrevLogTerm(nextIndex int) int {
-	if len(p.server.raftState.log) == 0 {
+	if len(p.server.raftState.log) == 0 || len(p.server.raftState.log) == 1 {
 		return 0
 	}
 
-	index := nextIndex - 1
+	prevIndex := nextIndex - 1
 
-	if index - 1 >= len(p.server.raftState.log) {
-		p.server.sugar.Infow("erroring getting prev log term")
-	}
-
-	if index - 1 < 0 {
+	// TODO: figure out why we are getting this issue
+	if prevIndex-1 < 0 {
 		return 0
 	}
 
-	return p.server.raftState.log[index - 1].term
+	// prevIndex is 1-indexed so subtract 1
+	return p.server.raftState.log[prevIndex-1].term
 }
 
 func (p *peer) GetPrevLogIndex(nextIndex int) int {
-	if len(p.server.raftState.log) == 0 {
+	if len(p.server.raftState.log) == 0 || len(p.server.raftState.log) == 1 {
 		return 0
 	}
 
-	index := nextIndex - 1
+	prevIndex := nextIndex - 1
 
-	if index - 1 >= len(p.server.raftState.log) {
-		p.server.sugar.Infow("erroring getting prev log term")
-	}
-
-	if index - 1 < 0 {
-		return 0
-	}
-
-	return p.server.raftState.log[index - 1].index
+	return prevIndex
 }

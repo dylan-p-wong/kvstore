@@ -34,9 +34,12 @@ type RaftState struct {
 	votedFor    int
 	log         []*LogEntry
 	// Volatile state
+	// https://stackoverflow.com/questions/46376293/what-is-lastapplied-and-matchindex-in-raft-protocol-for-volatile-state-in-server
+	// commitIndex is set then we apply to state machine then we update lastApplied
 	commitIndex int
 	lastApplied int
 	// Volatile state (LEADERS)
+	// https://stackoverflow.com/questions/46376293/what-is-lastapplied-and-matchindex-in-raft-protocol-for-volatile-state-in-server
 	nextIndex  map[int]int
 	matchIndex map[int]int
 }
