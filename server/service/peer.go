@@ -133,26 +133,23 @@ func (p *peer) Heartbeat() {
 }
 
 func (p *peer) GetPrevLogTerm(nextIndex int) int {
-	if len(p.server.raftState.log) == 0 || len(p.server.raftState.log) == 1 {
+	// we assume nextIndex is always greater than or equal to 1
+
+	// this occurs when log length is greater than the nextIndex we need to send to a peer
+	if nextIndex == 1 {
 		return 0
 	}
 
 	prevIndex := nextIndex - 1
-
-	// TODO: figure out why we are getting this issue
-	if prevIndex-1 < 0 {
-		return 0
-	}
 
 	// prevIndex is 1-indexed so subtract 1
 	return p.server.raftState.log[prevIndex-1].term
 }
 
 func (p *peer) GetPrevLogIndex(nextIndex int) int {
-	if len(p.server.raftState.log) == 0 || len(p.server.raftState.log) == 1 {
-		return 0
-	}
+	// we assume nextIndex is always greater than or equal to 1
 
+	// we get the index before nextIndex
 	prevIndex := nextIndex - 1
 
 	return prevIndex
