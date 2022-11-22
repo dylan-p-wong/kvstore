@@ -16,10 +16,10 @@ type peer struct {
 	heartbeatInterval time.Duration
 
 	stopChannel chan bool
-	server      *Server
+	server      *server
 }
 
-func NewPeer(id int, url string, heartbeatInterval time.Duration, server *Server) (*peer, error) {
+func newPeer(id int, url string, heartbeatInterval time.Duration, server *server) (*peer, error) {
 	connection, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		server.sugar.Infow("error dialing connection", "err", err)
@@ -35,7 +35,7 @@ func NewPeer(id int, url string, heartbeatInterval time.Duration, server *Server
 	}, nil
 }
 
-func (p *peer) SendVoteRequest(request *pb.RequestVoteRequest, requestVoteResponseChannel chan *pb.RequestVoteResponse) {
+func (p *peer) sendVoteRequest(request *pb.RequestVoteRequest, requestVoteResponseChannel chan *pb.RequestVoteResponse) {
 	p.server.sugar.Infow("sending request vote request", "peer", p.id)
 	response, err := p.client.RequestVote(context.Background(), request)
 
@@ -47,7 +47,7 @@ func (p *peer) SendVoteRequest(request *pb.RequestVoteRequest, requestVoteRespon
 	}
 }
 
-func (p *peer) SendAppendEntriesRequest(request *pb.AppendEntriesRequest) {
+func (p *peer) sendAppendEntriesRequest(request *pb.AppendEntriesRequest) {
 	p.server.sugar.Infow("sending append entries request", "peer", p.id, "request", request)
 	response, err := p.client.AppendEntries(context.Background(), request)
 
@@ -65,23 +65,23 @@ func (p *peer) SendAppendEntriesRequest(request *pb.AppendEntriesRequest) {
 	}()
 }
 
-func (p *peer) StartHeartbeat() {
+func (p *peer) startHeartbeat() {
 	p.server.sugar.Infow("peer heartbeat starting", "peer", p.id)
 
 	p.server.routineGroup.Add(1)
 	go func() {
 		defer p.server.routineGroup.Done()
-		p.Heartbeat()
+		p.heartbeat()
 	}()
 }
 
-func (p *peer) StopHeartbeat(flush bool) {
+func (p *peer) stopHeartbeat(flush bool) {
 	p.server.sugar.Infow("peer heartbeat stopping", "peer", p.id)
 	p.stopChannel <- flush
 	p.server.sugar.Infow("peer heartbeat stopped", "peer", p.id)
 }
 
-func (p *peer) Flush() {
+func (p *peer) flush() {
 	nextIndex := p.server.raftState.nextIndex[p.id]
 
 	p.server.sugar.Infow("flushing peer", "peer", p.id, "nextIndex", nextIndex)
@@ -100,18 +100,18 @@ func (p *peer) Flush() {
 		}
 	}
 
-	p.SendAppendEntriesRequest(&pb.AppendEntriesRequest{
+	p.sendAppendEntriesRequest(&pb.AppendEntriesRequest{
 		Term:         uint64(p.server.raftState.currentTerm),
 		LeaderId:     uint64(p.server.id),
-		PrevLogIndex: uint64(p.GetPrevLogIndex(nextIndex)),
-		PrevLogTerm:  uint64(p.GetPrevLogTerm(nextIndex)),
+		PrevLogIndex: uint64(p.getPrevLogIndex(nextIndex)),
+		PrevLogTerm:  uint64(p.getPrevLogTerm(nextIndex)),
 		Entries:      entries,
 		LeaderCommit: uint64(p.server.raftState.commitIndex),
 	})
 }
 
 // Listens to the heartbeat timeout and flushes an AppendEntries RPC
-func (p *peer) Heartbeat() {
+func (p *peer) heartbeat() {
 	// must use NewTicker so we can shut it down
 	// https://stackoverflow.com/questions/38856959/go-time-tick-vs-time-newticker
 	ticker := time.NewTicker(p.heartbeatInterval)
@@ -122,17 +122,17 @@ func (p *peer) Heartbeat() {
 			ticker.Stop()
 			p.server.sugar.Infow("heartbeat stopped", "peer", p.id, "flush", flush)
 			if flush {
-				p.Flush()
+				p.flush()
 				return
 			}
 		case <-ticker.C:
 			p.server.sugar.Infow("heartbeat timeout elapsed", "peer", p.id)
-			p.Flush()
+			p.flush()
 		}
 	}
 }
 
-func (p *peer) GetPrevLogTerm(nextIndex int) int {
+func (p *peer) getPrevLogTerm(nextIndex int) int {
 	// we assume nextIndex is always greater than or equal to 1
 
 	// this occurs when log length is greater than the nextIndex we need to send to a peer
@@ -146,7 +146,7 @@ func (p *peer) GetPrevLogTerm(nextIndex int) int {
 	return p.server.raftState.log[prevIndex-1].term
 }
 
-func (p *peer) GetPrevLogIndex(nextIndex int) int {
+func (p *peer) getPrevLogIndex(nextIndex int) int {
 	// we assume nextIndex is always greater than or equal to 1
 
 	// we get the index before nextIndex

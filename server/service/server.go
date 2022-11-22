@@ -25,7 +25,7 @@ const (
 	DefaultElectionTimeout   = 5000 * time.Millisecond
 )
 
-type RaftState struct {
+type raftState struct {
 	// State
 	state State
 
@@ -44,8 +44,8 @@ type RaftState struct {
 	matchIndex map[int]int
 }
 
-type Server struct {
-	raftState RaftState
+type server struct {
+	raftState raftState
 	pb.UnimplementedKVServer
 
 	events       chan RPCRequest
@@ -62,9 +62,9 @@ type Server struct {
 	sugar *zap.SugaredLogger
 }
 
-func NewServer(id int, url string, sugar *zap.SugaredLogger) *Server {
+func NewServer(id int, url string, sugar *zap.SugaredLogger) *server {
 
-	state := RaftState{
+	state := raftState{
 		currentTerm: 0,
 		votedFor:    -1,
 		log:         make([]*LogEntry, 0),
@@ -74,7 +74,7 @@ func NewServer(id int, url string, sugar *zap.SugaredLogger) *Server {
 		matchIndex:  make(map[int]int),
 	}
 
-	s := &Server{
+	s := &server{
 		events: make(chan RPCRequest),
 
 		raftState:         state,
@@ -90,13 +90,13 @@ func NewServer(id int, url string, sugar *zap.SugaredLogger) *Server {
 	return s
 }
 
-func (s *Server) Init() error {
+func (s *server) Init() error {
 	s.sugar.Infow("server initialized")
 	s.raftState.state = INITIALIZED
 	return nil
 }
 
-func (s *Server) Start() error {
+func (s *server) Start() error {
 	s.sugar.Infow("server starting")
 	err := s.Init()
 
@@ -114,13 +114,13 @@ func (s *Server) Start() error {
 		s.loop()
 	}()
 
-	go s.MonitorState()
+	go s.monitorState()
 
 	s.sugar.Infow("server started")
 	return nil
 }
 
-func (s *Server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, error) {
+func (s *server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, error) {
 	s.sugar.Infow("received PUT request", "request", in)
 
 	_, err := s.send(in)
@@ -134,11 +134,12 @@ func (s *Server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, e
 	}, nil
 }
 
-func (s *Server) Get(ctx context.Context, in *pb.GetRequest) (*pb.GetResponse, error) {
+func (s *server) Get(ctx context.Context, in *pb.GetRequest) (*pb.GetResponse, error) {
+	// TODO
 	return &pb.GetResponse{Success: true, Key: []byte(in.GetKey()), Value: []byte("?")}, nil
 }
 
-func (s *Server) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
+func (s *server) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
 	s.sugar.Infow("received append entries request", "request", in)
 	defer s.sugar.Infow("responsed to append entries request", "request", in)
 
@@ -151,7 +152,7 @@ func (s *Server) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest)
 	return response.(*pb.AppendEntriesResponse), nil
 }
 
-func (s *Server) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (*pb.RequestVoteResponse, error) {
+func (s *server) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (*pb.RequestVoteResponse, error) {
 	s.sugar.Infow("received request vote request", "request", in)
 	defer s.sugar.Infow("responsed to request vote request", "request", in)
 
@@ -164,7 +165,7 @@ func (s *Server) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (*p
 	return response.(*pb.RequestVoteResponse), nil
 }
 
-func (s *Server) AddPeer(id int, url string) error {
+func (s *server) AddPeer(id int, url string) error {
 	if s.peers[id] != nil {
 		return errors.New("cannot add peer with the same id")
 	}
@@ -173,14 +174,14 @@ func (s *Server) AddPeer(id int, url string) error {
 		return errors.New("cannot add peer with the same id")
 	}
 
-	peer, err := NewPeer(id, url, s.heartbeatInterval, s)
+	peer, err := newPeer(id, url, s.heartbeatInterval, s)
 
 	if err != nil {
 		return err
 	}
 
 	if s.raftState.state == LEADER {
-		peer.StartHeartbeat()
+		peer.startHeartbeat()
 	}
 
 	s.peers[id] = peer
@@ -190,7 +191,7 @@ func (s *Server) AddPeer(id int, url string) error {
 	return nil
 }
 
-func (s *Server) RemovePeer(id int) error {
+func (s *server) RemovePeer(id int) error {
 	if id != s.id {
 		return errors.New("cannot remove this server")
 	}
@@ -202,7 +203,7 @@ func (s *Server) RemovePeer(id int) error {
 
 	if s.raftState.state == LEADER {
 		for _, p := range s.peers {
-			p.StopHeartbeat(true)
+			p.stopHeartbeat(true)
 		}
 	}
 
@@ -211,17 +212,17 @@ func (s *Server) RemovePeer(id int) error {
 	return nil
 }
 
-func (s *Server) MonitorState() {
+func (s *server) monitorState() {
 	ticker := time.NewTicker(2000 * time.Millisecond)
 
 	for {
 		select {
 		case <-ticker.C:
-			s.LogState()
+			s.logState()
 		}
 	}
 }
 
-func (s *Server) LogState() {
+func (s *server) logState() {
 	s.sugar.Infow("server state", "commitIndex", s.raftState.commitIndex, "lastApplied", s.raftState.lastApplied, "nextIndex", s.raftState.nextIndex, "matchIndex", s.raftState.matchIndex, "log", s.raftState.log)
 }

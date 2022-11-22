@@ -19,7 +19,7 @@ type RPCRequest struct {
 }
 
 // sends to event loop
-func (s *Server) send(command interface{}) (interface{}, error) {
+func (s *server) send(command interface{}) (interface{}, error) {
 	channel := make(chan RPCResponse, 1)
 
 	rpc := RPCRequest{
@@ -38,7 +38,7 @@ func (s *Server) send(command interface{}) (interface{}, error) {
 	return response.Response, nil
 }
 
-func (s *Server) loop() {
+func (s *server) loop() {
 	for s.raftState.state != STOPPED {
 		if s.raftState.state == FOLLOWER {
 			s.followerLoop()
@@ -50,7 +50,7 @@ func (s *Server) loop() {
 	}
 }
 
-func (s *Server) followerLoop() {
+func (s *server) followerLoop() {
 	s.sugar.Infow("starting follower event loop")
 
 	// follower event loop
@@ -79,7 +79,7 @@ func (s *Server) followerLoop() {
 	}
 }
 
-func (s *Server) candidateLoop() {
+func (s *server) candidateLoop() {
 	s.sugar.Infow("starting candidate event loop")
 
 	doVote := true
@@ -105,7 +105,7 @@ func (s *Server) candidateLoop() {
 				s.routineGroup.Add(1)
 				go func(p *peer) {
 					defer s.routineGroup.Done()
-					p.SendVoteRequest(&pb.RequestVoteRequest{
+					p.sendVoteRequest(&pb.RequestVoteRequest{
 						Term:         uint64(s.raftState.currentTerm),
 						CandidateId:  uint64(s.id),
 						LastLogIndex: 0, // TODO
@@ -156,7 +156,7 @@ func (s *Server) candidateLoop() {
 	}
 }
 
-func (s *Server) leaderLoop() {
+func (s *server) leaderLoop() {
 	s.sugar.Infow("starting leader event loop")
 
 	// see voliatile state on leaders
@@ -171,7 +171,7 @@ func (s *Server) leaderLoop() {
 
 	s.sugar.Infow("starting peer heatbeats", "peers", s.peers)
 	for _, p := range s.peers {
-		p.StartHeartbeat()
+		p.startHeartbeat()
 	}
 
 	// send inital requests to claim
@@ -179,11 +179,11 @@ func (s *Server) leaderLoop() {
 	go func() {
 		defer s.routineGroup.Done()
 		for _, p := range s.peers {
-			go p.SendAppendEntriesRequest(&pb.AppendEntriesRequest{
+			go p.sendAppendEntriesRequest(&pb.AppendEntriesRequest{
 				Term:         uint64(s.raftState.currentTerm),
 				LeaderId:     uint64(s.id),
-				PrevLogIndex: uint64(p.GetPrevLogIndex(s.raftState.nextIndex[p.id])),
-				PrevLogTerm:  uint64(p.GetPrevLogTerm(s.raftState.nextIndex[p.id])),
+				PrevLogIndex: uint64(p.getPrevLogIndex(s.raftState.nextIndex[p.id])),
+				PrevLogTerm:  uint64(p.getPrevLogTerm(s.raftState.nextIndex[p.id])),
 				Entries:      make([]*pb.LogEntry, 0),
 				LeaderCommit: uint64(s.raftState.commitIndex),
 			})
@@ -197,7 +197,7 @@ func (s *Server) leaderLoop() {
 		case <-s.stopped:
 			s.sugar.Infow("stopping peer heatbeats", "peers", len(s.peers))
 			for _, p := range s.peers {
-				p.StopHeartbeat(false)
+				p.stopHeartbeat(false)
 			}
 			s.raftState.state = STOPPED
 			return
@@ -224,12 +224,12 @@ func (s *Server) leaderLoop() {
 	}
 }
 
-func (s *Server) handleAllServerRequestResponseRules(term int) {
+func (s *server) handleAllServerRequestResponseRules(term int) {
 	// see rules for all servers in raft paper
 	if term > s.raftState.currentTerm {
 		if s.raftState.state == LEADER {
 			for _, p := range s.peers {
-				p.StopHeartbeat(false)
+				p.stopHeartbeat(false)
 			}
 		}
 		s.raftState.state = FOLLOWER
@@ -237,7 +237,7 @@ func (s *Server) handleAllServerRequestResponseRules(term int) {
 	}
 }
 
-func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCResponse {
+func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCResponse {
 	s.sugar.Infow("processing request vote request", "request", request)
 	s.handleAllServerRequestResponseRules(int(request.Term))
 
@@ -271,7 +271,7 @@ func (s *Server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCRe
 	return response
 }
 
-func (s *Server) processPutRequest(request *pb.PutRequest, responseChannel chan RPCResponse) {
+func (s *server) processPutRequest(request *pb.PutRequest, responseChannel chan RPCResponse) {
 	s.sugar.Infow("processing PUT request", "request", request)
 
 	nextIndex := s.GetLastLogIndex() + 1
@@ -298,7 +298,7 @@ func (s *Server) processPutRequest(request *pb.PutRequest, responseChannel chan 
 	}
 }
 
-func (s *Server) processRequestVoteResponse(response *pb.RequestVoteResponse) bool {
+func (s *server) processRequestVoteResponse(response *pb.RequestVoteResponse) bool {
 	s.sugar.Infow("processing request vote response", "response", response)
 	s.handleAllServerRequestResponseRules(int(response.Term))
 
@@ -309,7 +309,7 @@ func (s *Server) processRequestVoteResponse(response *pb.RequestVoteResponse) bo
 	return false
 }
 
-func (s *Server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) RPCResponse {
+func (s *server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) RPCResponse {
 	// we assume entries are sorted by index
 
 	s.sugar.Infow("processing append entries request", "request", request)
@@ -395,7 +395,7 @@ func (s *Server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) R
 	return response
 }
 
-func (s *Server) processAppendEntriesResponse(response *pb.AppendEntriesResponse) {
+func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse) {
 	s.sugar.Infow("processing append entries response", "response", response)
 	s.handleAllServerRequestResponseRules(int(response.Term))
 	// if handleAllServerRequestResponseRules changed state
