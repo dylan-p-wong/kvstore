@@ -13,6 +13,26 @@ type ServerConfig struct {
 	Peers map[int]string
 }
 
+func parsePeers(peersString *string) (map[int]string, error) {
+	m := make(map[int]string)
+	for _, peer := range strings.Split(*peersString, ",") {
+		ps := strings.Split(peer, "=")
+
+		if len(ps) != 2 {
+			return nil, errors.New("invalid config.")
+		}
+
+		pid, err := strconv.Atoi(ps[0])
+		if err != nil {
+			return nil, err
+		}
+
+		m[pid] = ps[1]
+	}
+
+	return m, nil
+}
+
 func LoadConfig() (ServerConfig, error) {
 	id := flag.Int("id", 0, "The node id")
 	url := flag.String("url", "127.0.0.1:50051", "The server port")
@@ -20,20 +40,10 @@ func LoadConfig() (ServerConfig, error) {
 
 	flag.Parse()
 
-	m := make(map[int]string)
-	for _, peer := range strings.Split(*peers, ",") {
-		ps := strings.Split(peer, "=")
+	m, err := parsePeers(peers)
 
-		if len(ps) != 2 {
-			return ServerConfig{}, errors.New("invalid config.")
-		}
-
-		pid, err := strconv.Atoi(ps[0])
-		if err != nil {
-			return ServerConfig{}, err
-		}
-
-		m[pid] = ps[1]
+	if err != nil {
+		return ServerConfig{}, err
 	}
 
 	return ServerConfig{
