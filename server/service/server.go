@@ -10,10 +10,10 @@ import (
 	"go.uber.org/zap"
 )
 
-type State int
+type stateType int
 
 const (
-	FOLLOWER State = 1 + iota
+	FOLLOWER stateType = 1 + iota
 	CANDIDATE
 	LEADER
 	STOPPED
@@ -27,7 +27,7 @@ const (
 
 type raftState struct {
 	// State
-	state State
+	state stateType
 
 	// Persistent state
 	currentTerm int
@@ -48,7 +48,7 @@ type server struct {
 	raftState raftState
 	pb.UnimplementedKVServer
 
-	events       chan RPCRequest
+	events       chan EventRequest
 	stopped      chan bool
 	routineGroup sync.WaitGroup
 
@@ -75,7 +75,7 @@ func NewServer(id int, url string, sugar *zap.SugaredLogger) *server {
 	}
 
 	s := &server{
-		events: make(chan RPCRequest),
+		events: make(chan EventRequest),
 
 		raftState:         state,
 		peers:             make(map[int]*peer),
@@ -91,8 +91,11 @@ func NewServer(id int, url string, sugar *zap.SugaredLogger) *server {
 }
 
 func (s *server) Init() error {
-	s.sugar.Infow("server initialized")
+	// TODO load from persistent storage
+
 	s.raftState.state = INITIALIZED
+
+	s.sugar.Infow("server initialized")
 	return nil
 }
 
@@ -126,7 +129,9 @@ func (s *server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, e
 	_, err := s.send(in)
 
 	if err != nil {
-		return nil, err
+		return &pb.PutResponse{
+			Success: false,
+		}, nil
 	}
 
 	return &pb.PutResponse{
@@ -212,6 +217,7 @@ func (s *server) RemovePeer(id int) error {
 	return nil
 }
 
+// monitoring state
 func (s *server) monitorState() {
 	ticker := time.NewTicker(2000 * time.Millisecond)
 
@@ -223,6 +229,7 @@ func (s *server) monitorState() {
 	}
 }
 
+// logging state
 func (s *server) logState() {
 	s.sugar.Infow("server state", "commitIndex", s.raftState.commitIndex, "lastApplied", s.raftState.lastApplied, "nextIndex", s.raftState.nextIndex, "matchIndex", s.raftState.matchIndex, "log", s.raftState.log)
 }

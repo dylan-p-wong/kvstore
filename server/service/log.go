@@ -6,10 +6,10 @@ type LogEntry struct {
 	term  int
 	index int
 	command string
-	responseChannel chan RPCResponse
+	responseChannel chan EventResponse
 }
 
-func newLogEntry(term int, index int, command string, responseChannel chan RPCResponse) LogEntry {
+func newLogEntry(term int, index int, command string, responseChannel chan EventResponse) LogEntry {
 	return LogEntry{
 		term:  term,
 		index: index,

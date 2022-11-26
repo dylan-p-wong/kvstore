@@ -8,26 +8,26 @@ import (
 	pb "github.com/dylan-p-wong/kvstore/api"
 )
 
-type RPCResponse struct {
+type EventResponse struct {
 	Response interface{}
 	Error    error
 }
 
-type RPCRequest struct {
+type EventRequest struct {
 	Command         interface{}
-	ResponseChannel chan RPCResponse
+	ResponseChannel chan EventResponse
 }
 
 // sends to event loop
 func (s *server) send(command interface{}) (interface{}, error) {
-	channel := make(chan RPCResponse, 1)
+	channel := make(chan EventResponse, 1)
 
-	rpc := RPCRequest{
+	event := EventRequest{
 		Command:         command,
 		ResponseChannel: channel,
 	}
 
-	s.events <- rpc
+	s.events <- event
 
 	response := <-channel
 
@@ -216,9 +216,7 @@ func (s *server) leaderLoop() {
 				event.ResponseChannel <- s.processRequestVoteRequest(event.Command.(*pb.RequestVoteRequest))
 			case *pb.AppendEntriesResponse:
 				s.sugar.Infow("recieved append entries response", "state", "LEADER")
-				s.processAppendEntriesResponse(event.Command.(*pb.AppendEntriesResponse))
-				// Signal to a send we are done
-				event.ResponseChannel <- RPCResponse{}
+				event.ResponseChannel <- s.processAppendEntriesResponse(event.Command.(*pb.AppendEntriesResponse))
 			}
 		}
 	}
@@ -237,11 +235,11 @@ func (s *server) handleAllServerRequestResponseRules(term int) {
 	}
 }
 
-func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCResponse {
+func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) EventResponse {
 	s.sugar.Infow("processing request vote request", "request", request)
 	s.handleAllServerRequestResponseRules(int(request.Term))
 
-	var response RPCResponse
+	var response EventResponse
 	response.Error = nil
 
 	// reply false if term < currentTerm
@@ -271,7 +269,7 @@ func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) RPCRe
 	return response
 }
 
-func (s *server) processPutRequest(request *pb.PutRequest, responseChannel chan RPCResponse) {
+func (s *server) processPutRequest(request *pb.PutRequest, responseChannel chan EventResponse) {
 	s.sugar.Infow("processing PUT request", "request", request)
 
 	nextIndex := s.GetLastLogIndex() + 1
@@ -284,7 +282,7 @@ func (s *server) processPutRequest(request *pb.PutRequest, responseChannel chan 
 
 	if err != nil {
 		s.sugar.Infow("error appending entry to log", err)
-		responseChannel <- RPCResponse{
+		responseChannel <- EventResponse{
 			Error: errors.New("error appending entry to log"),
 		}
 	}
@@ -309,13 +307,13 @@ func (s *server) processRequestVoteResponse(response *pb.RequestVoteResponse) bo
 	return false
 }
 
-func (s *server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) RPCResponse {
+func (s *server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) EventResponse {
 	// we assume entries are sorted by index
 
 	s.sugar.Infow("processing append entries request", "request", request)
 	s.handleAllServerRequestResponseRules(int(request.Term))
 
-	var response RPCResponse
+	var response EventResponse
 	response.Error = nil
 
 	// 1. reply false if term < currentTerm
@@ -364,7 +362,7 @@ func (s *server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) R
 		}
 
 		if !duplicate {
-			newLe := newLogEntry(int(rle.Term), int(rle.Index), rle.CommandName, make(chan RPCResponse))
+			newLe := newLogEntry(int(rle.Term), int(rle.Index), rle.CommandName, make(chan EventResponse))
 			s.raftState.log = append(s.raftState.log, &newLe)
 		}
 	}
@@ -395,12 +393,12 @@ func (s *server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) R
 	return response
 }
 
-func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse) {
+func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse) EventResponse {
 	s.sugar.Infow("processing append entries response", "response", response)
 	s.handleAllServerRequestResponseRules(int(response.Term))
 	// if handleAllServerRequestResponseRules changed state
 	if s.raftState.state != LEADER {
-		return
+		return EventResponse{ Error: errors.New("not leader") }
 	}
 
 	// see leaders bullet 5
@@ -408,7 +406,7 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 	// retry will be done on the next peer heartbeat
 	if response.Success == false {
 		s.raftState.nextIndex[int(response.ServerId)]--
-		return
+		return EventResponse{ Error: errors.New("unsuccessful append entries request") }
 	}
 
 	// see leaders bullet 4
@@ -435,9 +433,11 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 			// TODO: sync log entry to disk
 			s.raftState.lastApplied = s.raftState.commitIndex
 			// reply to waiting channel that the command has been replicated
-			s.raftState.log[commitedIndex-1].responseChannel <- RPCResponse{
+			s.raftState.log[commitedIndex-1].responseChannel <- EventResponse{
 				Error: nil,
 			}
 		}
 	}
+
+	return EventResponse{ Error: nil }
 }
