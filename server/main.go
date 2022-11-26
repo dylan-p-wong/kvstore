@@ -9,22 +9,24 @@ import (
 	"github.com/dylan-p-wong/kvstore/server/config"
 	"github.com/dylan-p-wong/kvstore/server/service"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 )
 
 func main() {
-	logger, _ := zap.NewProduction()
-	defer logger.Sync() // flushes buffer, if any
-	sugar := logger.Sugar()
-
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		sugar.Infow("failed to load config", "err", err)
+		os.Exit(1)
 	}
+
+	logger := setupLogger()
+	defer logger.Sync()
+	sugar := logger.Sugar().With("node", cfg.Id)
 
 	listen, err := net.Listen("tcp", fmt.Sprintf("%s", cfg.URL))
 	if err != nil {
 		sugar.Infow("failed to listen", "err", err)
+		os.Exit(1)
 	}
 
 	server := service.NewServer(cfg.Id, cfg.URL, sugar)
@@ -47,4 +49,13 @@ func main() {
 	if err := s.Serve(listen); err != nil {
 		sugar.Infow("failed to server", "err", err)
 	}
+}
+
+func setupLogger() *zap.Logger {
+	consoleDebugging := zapcore.Lock(os.Stdout)
+	consoleEncoder := zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig())
+	core := zapcore.NewTee(zapcore.NewCore(consoleEncoder, consoleDebugging, zapcore.DebugLevel))
+	logger := zap.New(core)
+
+	return logger
 }

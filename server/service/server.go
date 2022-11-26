@@ -119,7 +119,6 @@ func (s *server) Start() error {
 
 	go s.monitorState()
 
-	s.sugar.Infow("server started")
 	return nil
 }
 
