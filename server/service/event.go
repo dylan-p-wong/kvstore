@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -99,7 +100,9 @@ func (s *server) candidateLoop() {
 			// votes for itself
 			s.raftState.votedFor = s.id
 			votesGranted = 1
-
+			// persist votedFor
+			_ = s.storage.Set("voted-for", fmt.Sprint(s.raftState.votedFor))
+			
 			requestVoteResponseChannel = make(chan *pb.RequestVoteResponse, len(s.peers))
 			for _, p := range s.peers {
 				s.routineGroup.Add(1)
@@ -254,6 +257,8 @@ func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) Event
 	// if votedFor is null or candidateId AND TODO(candidate log is at least as up to date as reciever log) grant vote
 	if s.raftState.votedFor == -1 || s.raftState.votedFor != s.id {
 		s.raftState.votedFor = int(request.CandidateId)
+		// persist votedFor
+		_ = s.storage.Set("voted-for", fmt.Sprint(s.raftState.votedFor))
 
 		response.Response = &pb.RequestVoteResponse{
 			Term:        uint64(s.raftState.currentTerm),
@@ -272,13 +277,19 @@ func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) Event
 func (s *server) processPutRequest(request *pb.PutRequest, responseChannel chan EventResponse) {
 	s.sugar.Infow("processing PUT request", "request", request)
 
+	// encode put request into command
+	command, err := encodeCommand(string(request.Key), string(request.Value))
+	if err != nil {
+		responseChannel <- EventResponse{
+			Error: err,
+		}
+		return
+	}
+
 	nextIndex := s.GetLastLogIndex() + 1
+	entry := newLogEntry(s.raftState.currentTerm, nextIndex, command, responseChannel)
 
-	entry := newLogEntry(s.raftState.currentTerm, nextIndex, string(request.Key)+":"+string(request.Value), responseChannel)
-
-	err := s.appendLogEntry(entry)
-
-	s.sugar.Infow("appended log entry to log", "index", entry.index, "term", entry.term, "command", entry.command)
+	err = s.appendLogEntry(entry)
 
 	if err != nil {
 		s.sugar.Infow("error appending entry to log", err)
@@ -378,8 +389,15 @@ func (s *server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) E
 
 	// see all servers bullet 2
 	for s.raftState.lastApplied < s.raftState.commitIndex {
-		// TODO: sync s.raftState.log[lastApplied+1-1] to disk
-		s.raftState.lastApplied++
+		// sync s.raftState.log[lastApplied+1-1] to disk
+		key, value, err := decodeCommand(s.raftState.log[s.raftState.lastApplied].command)
+		if err == nil {
+			s.storage.Set(key, value)
+			s.raftState.lastApplied++
+		} else {
+			// TODO: revisit what to do on error
+			break
+		}
 	}
 
 	response.Response = &pb.AppendEntriesResponse{
@@ -427,11 +445,32 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 
 	commitedIndex := matchIndexes[(len(s.peers)+1)/2+1-1]
 
+	// TODO: revisit and see if we need to change to a loop
 	if commitedIndex > s.raftState.commitIndex {
 		if s.raftState.log[commitedIndex-1].term == s.raftState.currentTerm {
 			s.raftState.commitIndex = matchIndexes[(len(s.peers)+1)/2+1-1]
-			// TODO: sync log entry to disk
+
+			key, value, err := decodeCommand(s.raftState.log[commitedIndex-1].command)
+			
+			// error decoding command, invalid
+			if err != nil {
+				return EventResponse{
+					Error: err,
+				}
+			}
+
+			// sync log entry to disk			
+			err = s.storage.Set(key, value)
+
+			// we had an error setting in storage
+			if err != nil {
+				return EventResponse{
+					Error: err,
+				}
+			}
+
 			s.raftState.lastApplied = s.raftState.commitIndex
+
 			// reply to waiting channel that the command has been replicated
 			s.raftState.log[commitedIndex-1].responseChannel <- EventResponse{
 				Error: nil,

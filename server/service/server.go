@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pb "github.com/dylan-p-wong/kvstore/api"
+	"github.com/dylan-p-wong/kvstore/server/storage"
 	"go.uber.org/zap"
 )
 
@@ -60,6 +61,8 @@ type server struct {
 	electionTimeout   time.Duration
 
 	sugar *zap.SugaredLogger
+
+	storage storage.Storage
 }
 
 func NewServer(id int, url string, sugar *zap.SugaredLogger) *server {
@@ -85,17 +88,22 @@ func NewServer(id int, url string, sugar *zap.SugaredLogger) *server {
 		electionTimeout:   DefaultElectionTimeout,
 
 		sugar: sugar,
+
+		storage: storage.New(""), // TODO
 	}
 
 	return s
 }
 
 func (s *server) Init() error {
-	// TODO load from persistent storage
+	defer s.sugar.Infow("server initialized")
 
+	// restore from persistence storage
+	s.restoreFromStorage()
+
+	// set state to initialized
 	s.raftState.state = INITIALIZED
 
-	s.sugar.Infow("server initialized")
 	return nil
 }
 
@@ -139,8 +147,13 @@ func (s *server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, e
 }
 
 func (s *server) Get(ctx context.Context, in *pb.GetRequest) (*pb.GetResponse, error) {
-	// TODO
-	return &pb.GetResponse{Success: true, Key: []byte(in.GetKey()), Value: []byte("?")}, nil
+	value, err := s.storage.Get(string(in.GetKey()))
+
+	if err != nil {
+		return &pb.GetResponse{Success: false, Key: []byte(in.GetKey())}, err
+	}
+
+	return &pb.GetResponse{Success: true, Key: []byte(in.GetKey()), Value: []byte(value)}, nil
 }
 
 func (s *server) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
@@ -219,6 +232,7 @@ func (s *server) RemovePeer(id int) error {
 // monitoring state
 func (s *server) monitorState() {
 	ticker := time.NewTicker(2000 * time.Millisecond)
+	defer ticker.Stop()
 
 	for {
 		select {
