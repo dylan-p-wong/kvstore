@@ -7,8 +7,12 @@ import (
 	"time"
 
 	pb "github.com/dylan-p-wong/kvstore/api"
-	"github.com/dylan-p-wong/kvstore/server/storage"
+	"github.com/dylan-p-wong/kvstore/server/storage/kv"
 	"go.uber.org/zap"
+)
+
+const (
+	dataDirectory = "data"
 )
 
 type stateType int
@@ -62,10 +66,10 @@ type server struct {
 
 	sugar *zap.SugaredLogger
 
-	storage storage.Storage
+	storage *kv.KV
 }
 
-func NewServer(id int, url string, sugar *zap.SugaredLogger) *server {
+func NewServer(id int, url string, dir string, sugar *zap.SugaredLogger) (*server, error) {
 
 	state := raftState{
 		currentTerm: 0,
@@ -75,6 +79,13 @@ func NewServer(id int, url string, sugar *zap.SugaredLogger) *server {
 		lastApplied: 0,
 		nextIndex:   make(map[int]int),
 		matchIndex:  make(map[int]int),
+	}
+
+	// initialize persistent storage
+	storage, err := kv.New(dir)
+
+	if err != nil {
+		return nil, err
 	}
 
 	s := &server{
@@ -89,10 +100,10 @@ func NewServer(id int, url string, sugar *zap.SugaredLogger) *server {
 
 		sugar: sugar,
 
-		storage: storage.New(""), // TODO
+		storage: storage,
 	}
 
-	return s
+	return s, nil
 }
 
 func (s *server) Init() error {
@@ -153,7 +164,11 @@ func (s *server) Get(ctx context.Context, in *pb.GetRequest) (*pb.GetResponse, e
 		return &pb.GetResponse{Success: false, Key: []byte(in.GetKey())}, err
 	}
 
-	return &pb.GetResponse{Success: true, Key: []byte(in.GetKey()), Value: []byte(value)}, nil
+	if value == nil {
+		return &pb.GetResponse{Success: true, Key: []byte(in.GetKey()), Value: nil}, nil
+	}
+
+	return &pb.GetResponse{Success: true, Key: []byte(in.GetKey()), Value: []byte(value.Value)}, nil
 }
 
 func (s *server) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
