@@ -1,6 +1,9 @@
 package service
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 type LogEntry struct {
 	term  int
@@ -19,6 +22,7 @@ func newLogEntry(term int, index int, command string, responseChannel chan Event
 }
 
 func (s *server) appendLogEntry(entry LogEntry) error {
+	s.sugar.Infow("appended log entry to log", "index", entry.index, "term", entry.term, "command", entry.command)
 
 	if len(s.raftState.log) > 0 {
 		lastEntry := s.raftState.log[len(s.raftState.log)-1]
@@ -44,4 +48,26 @@ func (s *server) GetLastLogIndex() int {
 	}
 
 	return len(s.raftState.log)
+}
+
+func (s *server) GetLastLogTerm() int {
+	if len(s.raftState.log) == 0 {
+		return 0
+	}
+
+	return s.raftState.log[len(s.raftState.log) - 1].term
+}
+
+func encodeCommand(key string, value string) (string, error) {
+	return key + ":" + value, nil
+}
+
+func decodeCommand(command string) (string, string, error) {
+	s := strings.Split(command, ":")
+
+	if len(s) != 2 {
+		return "", "", errors.New("invalid command")
+	}
+
+	return s[0], s[1], nil
 }

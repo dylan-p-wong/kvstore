@@ -95,10 +95,20 @@ func (s *server) candidateLoop() {
 
 			// Increment current term
 			s.raftState.currentTerm++
+			err := s.persistCurrentTerm()
+			if err != nil {
+				panic(err) // TODO: is there something else we should do?
+			}
 
 			// votes for itself
 			s.raftState.votedFor = s.id
 			votesGranted = 1
+
+			// persist votedFor
+			err = s.persistVotedFor()
+			if err != nil {
+				panic(err) // TODO: is there something else we should do?
+			}
 
 			requestVoteResponseChannel = make(chan *pb.RequestVoteResponse, len(s.peers))
 			for _, p := range s.peers {
@@ -108,8 +118,8 @@ func (s *server) candidateLoop() {
 					p.sendVoteRequest(&pb.RequestVoteRequest{
 						Term:         uint64(s.raftState.currentTerm),
 						CandidateId:  uint64(s.id),
-						LastLogIndex: 0, // TODO
-						LastLogTerm:  0, // TODO
+						LastLogIndex: uint64(s.GetLastLogIndex()),
+						LastLogTerm:  uint64(s.GetLastLogTerm()),
 					}, requestVoteResponseChannel)
 				}(p)
 			}
@@ -253,7 +263,13 @@ func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) Event
 
 	// if votedFor is null or candidateId AND TODO(candidate log is at least as up to date as reciever log) grant vote
 	if s.raftState.votedFor == -1 || s.raftState.votedFor != s.id {
+		// set voted for to candidate
 		s.raftState.votedFor = int(request.CandidateId)
+		// persist votedFor
+		err := s.persistVotedFor()
+		if err != nil {
+			panic(err) // TODO: is there something else we should do?
+		}
 
 		response.Response = &pb.RequestVoteResponse{
 			Term:        uint64(s.raftState.currentTerm),
@@ -272,13 +288,19 @@ func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) Event
 func (s *server) processPutRequest(request *pb.PutRequest, responseChannel chan EventResponse) {
 	s.sugar.Infow("processing PUT request", "request", request)
 
+	// encode put request into command
+	command, err := encodeCommand(string(request.Key), string(request.Value))
+	if err != nil {
+		responseChannel <- EventResponse{
+			Error: err,
+		}
+		return
+	}
+
 	nextIndex := s.GetLastLogIndex() + 1
+	entry := newLogEntry(s.raftState.currentTerm, nextIndex, command, responseChannel)
 
-	entry := newLogEntry(s.raftState.currentTerm, nextIndex, string(request.Key)+":"+string(request.Value), responseChannel)
-
-	err := s.appendLogEntry(entry)
-
-	s.sugar.Infow("appended log entry to log", "index", entry.index, "term", entry.term, "command", entry.command)
+	err = s.appendLogEntry(entry)
 
 	if err != nil {
 		s.sugar.Infow("error appending entry to log", err)
@@ -378,8 +400,14 @@ func (s *server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) E
 
 	// see all servers bullet 2
 	for s.raftState.lastApplied < s.raftState.commitIndex {
-		// TODO: sync s.raftState.log[lastApplied+1-1] to disk
-		s.raftState.lastApplied++
+		// sync s.raftState.log[lastApplied+1-1] to disk
+		err := s.persistLogEntry(s.raftState.log[s.raftState.lastApplied])
+		if err == nil {
+			s.raftState.lastApplied++
+		} else {
+			// TODO: revisit what to do on error
+			break
+		}
 	}
 
 	response.Response = &pb.AppendEntriesResponse{
@@ -398,7 +426,7 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 	s.handleAllServerRequestResponseRules(int(response.Term))
 	// if handleAllServerRequestResponseRules changed state
 	if s.raftState.state != LEADER {
-		return EventResponse{ Error: errors.New("not leader") }
+		return EventResponse{Error: errors.New("not leader")}
 	}
 
 	// see leaders bullet 5
@@ -406,7 +434,7 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 	// retry will be done on the next peer heartbeat
 	if response.Success == false {
 		s.raftState.nextIndex[int(response.ServerId)]--
-		return EventResponse{ Error: errors.New("unsuccessful append entries request") }
+		return EventResponse{Error: errors.New("unsuccessful append entries request")}
 	}
 
 	// see leaders bullet 4
@@ -427,11 +455,23 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 
 	commitedIndex := matchIndexes[(len(s.peers)+1)/2+1-1]
 
+	// TODO: revisit and see if we need to change to a loop
 	if commitedIndex > s.raftState.commitIndex {
 		if s.raftState.log[commitedIndex-1].term == s.raftState.currentTerm {
 			s.raftState.commitIndex = matchIndexes[(len(s.peers)+1)/2+1-1]
-			// TODO: sync log entry to disk
+
+			// sync log entry to disk
+			err := s.persistLogEntry(s.raftState.log[commitedIndex-1])
+
+			// we had an error setting in storage
+			if err != nil {
+				return EventResponse{
+					Error: err,
+				}
+			}
+
 			s.raftState.lastApplied = s.raftState.commitIndex
+
 			// reply to waiting channel that the command has been replicated
 			s.raftState.log[commitedIndex-1].responseChannel <- EventResponse{
 				Error: nil,
@@ -439,5 +479,5 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 		}
 	}
 
-	return EventResponse{ Error: nil }
+	return EventResponse{Error: nil}
 }

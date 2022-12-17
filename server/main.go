@@ -29,7 +29,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	server := service.NewServer(cfg.Id, cfg.URL, sugar)
+	server, err := service.NewServer(cfg.Id, cfg.URL, cfg.Directory, sugar)
+
+	if err != nil {
+		sugar.Infow("failed to create server", "err", err)
+		os.Exit(1)
+	}
 
 	for k, v := range cfg.Peers {
 		server.AddPeer(k, v)
@@ -38,6 +43,7 @@ func main() {
 	err = server.Start()
 
 	if err != nil {
+		sugar.Infow("failed to start server", "err", err)
 		os.Exit(1)
 	}
 
