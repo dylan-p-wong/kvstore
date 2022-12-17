@@ -63,3 +63,7 @@ func (mt *MemTable) Get(key string) *MemTableEntry {
 	// not found
 	return nil
 }
+
+func (mt *MemTable) GetEntries() []MemTableEntry {
+	return mt.entries
+}

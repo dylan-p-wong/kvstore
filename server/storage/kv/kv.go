@@ -78,3 +78,17 @@ func (kv *KV) Get(key string) (*StorageEntry, error) {
 	// TODO: now must search disk if we do not find in memtable
 	return nil, nil
 }
+
+func (kv *KV) GetAll() ([]StorageEntry, error) {
+	storageEntries :=  make([]StorageEntry, 0)
+
+	for _, entry := range kv.memTable.GetEntries() {
+		storageEntries = append(storageEntries, StorageEntry{
+			Key: entry.Key,
+			Value: entry.Value,
+			Timestamp: entry.Timestamp,
+		})
+	}
+
+	return storageEntries, nil
+}

@@ -2,7 +2,6 @@ package service
 
 import (
 	"errors"
-	"fmt"
 	"sort"
 	"time"
 
@@ -96,13 +95,14 @@ func (s *server) candidateLoop() {
 
 			// Increment current term
 			s.raftState.currentTerm++
+			_ = s.persistCurrentTerm() // TODO: handle error
 
 			// votes for itself
 			s.raftState.votedFor = s.id
 			votesGranted = 1
 			// persist votedFor
-			_ = s.storage.Set("voted-for", fmt.Sprint(s.raftState.votedFor))
-			
+			_ = s.persistVotedFor() // TODO: handle error
+
 			requestVoteResponseChannel = make(chan *pb.RequestVoteResponse, len(s.peers))
 			for _, p := range s.peers {
 				s.routineGroup.Add(1)
@@ -111,8 +111,8 @@ func (s *server) candidateLoop() {
 					p.sendVoteRequest(&pb.RequestVoteRequest{
 						Term:         uint64(s.raftState.currentTerm),
 						CandidateId:  uint64(s.id),
-						LastLogIndex: 0, // TODO
-						LastLogTerm:  0, // TODO
+						LastLogIndex: uint64(s.GetLastLogIndex()),
+						LastLogTerm:  uint64(s.GetLastLogTerm()),
 					}, requestVoteResponseChannel)
 				}(p)
 			}
@@ -258,7 +258,7 @@ func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) Event
 	if s.raftState.votedFor == -1 || s.raftState.votedFor != s.id {
 		s.raftState.votedFor = int(request.CandidateId)
 		// persist votedFor
-		_ = s.storage.Set("voted-for", fmt.Sprint(s.raftState.votedFor))
+		_ = s.persistVotedFor() // TODO: handle error
 
 		response.Response = &pb.RequestVoteResponse{
 			Term:        uint64(s.raftState.currentTerm),
@@ -390,9 +390,8 @@ func (s *server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) E
 	// see all servers bullet 2
 	for s.raftState.lastApplied < s.raftState.commitIndex {
 		// sync s.raftState.log[lastApplied+1-1] to disk
-		key, value, err := decodeCommand(s.raftState.log[s.raftState.lastApplied].command)
+		err := s.persistLogEntry(s.raftState.log[s.raftState.lastApplied])
 		if err == nil {
-			s.storage.Set(key, value)
 			s.raftState.lastApplied++
 		} else {
 			// TODO: revisit what to do on error
@@ -416,7 +415,7 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 	s.handleAllServerRequestResponseRules(int(response.Term))
 	// if handleAllServerRequestResponseRules changed state
 	if s.raftState.state != LEADER {
-		return EventResponse{ Error: errors.New("not leader") }
+		return EventResponse{Error: errors.New("not leader")}
 	}
 
 	// see leaders bullet 5
@@ -424,7 +423,7 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 	// retry will be done on the next peer heartbeat
 	if response.Success == false {
 		s.raftState.nextIndex[int(response.ServerId)]--
-		return EventResponse{ Error: errors.New("unsuccessful append entries request") }
+		return EventResponse{Error: errors.New("unsuccessful append entries request")}
 	}
 
 	// see leaders bullet 4
@@ -450,17 +449,8 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 		if s.raftState.log[commitedIndex-1].term == s.raftState.currentTerm {
 			s.raftState.commitIndex = matchIndexes[(len(s.peers)+1)/2+1-1]
 
-			key, value, err := decodeCommand(s.raftState.log[commitedIndex-1].command)
-			
-			// error decoding command, invalid
-			if err != nil {
-				return EventResponse{
-					Error: err,
-				}
-			}
-
-			// sync log entry to disk			
-			err = s.storage.Set(key, value)
+			// sync log entry to disk
+			err := s.persistLogEntry(s.raftState.log[commitedIndex-1])
 
 			// we had an error setting in storage
 			if err != nil {
@@ -478,5 +468,5 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 		}
 	}
 
-	return EventResponse{ Error: nil }
+	return EventResponse{Error: nil}
 }

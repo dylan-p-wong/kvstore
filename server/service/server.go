@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -49,6 +51,17 @@ type raftState struct {
 	matchIndex map[int]int
 }
 
+type RaftStorage interface {
+	Get(key string) (*kv.StorageEntry, error)
+	Set(key string, value string) error
+}
+
+type LogStorage interface {
+	Get(key string) (*kv.StorageEntry, error)
+	Set(key string, value string) error
+	GetAll() ([]kv.StorageEntry, error)
+}
+
 type server struct {
 	raftState raftState
 	pb.UnimplementedKVServer
@@ -66,7 +79,8 @@ type server struct {
 
 	sugar *zap.SugaredLogger
 
-	storage *kv.KV
+	raftStorage RaftStorage
+	logStorage  LogStorage
 }
 
 func NewServer(id int, url string, dir string, sugar *zap.SugaredLogger) (*server, error) {
@@ -82,8 +96,12 @@ func NewServer(id int, url string, dir string, sugar *zap.SugaredLogger) (*serve
 	}
 
 	// initialize persistent storage
-	storage, err := kv.New(dir)
+	raftStorage, err := kv.New(filepath.Join(dir, "raft"))
+	if err != nil {
+		return nil, err
+	}
 
+	logStorage, err := kv.New(filepath.Join(dir, "logs"))
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +118,8 @@ func NewServer(id int, url string, dir string, sugar *zap.SugaredLogger) (*serve
 
 		sugar: sugar,
 
-		storage: storage,
+		raftStorage: raftStorage,
+		logStorage:  logStorage,
 	}
 
 	return s, nil
@@ -110,7 +129,11 @@ func (s *server) Init() error {
 	defer s.sugar.Infow("server initialized")
 
 	// restore from persistence storage
-	s.restoreFromStorage()
+	err := s.restoreFromStorage()
+
+	if err != nil {
+		return err
+	}
 
 	// set state to initialized
 	s.raftState.state = INITIALIZED
@@ -147,18 +170,14 @@ func (s *server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, e
 	_, err := s.send(in)
 
 	if err != nil {
-		return &pb.PutResponse{
-			Success: false,
-		}, nil
+		return &pb.PutResponse{Success: false}, err
 	}
 
-	return &pb.PutResponse{
-		Success: true,
-	}, nil
+	return &pb.PutResponse{Success: true}, nil
 }
 
 func (s *server) Get(ctx context.Context, in *pb.GetRequest) (*pb.GetResponse, error) {
-	value, err := s.storage.Get(string(in.GetKey()))
+	value, err := s.logStorage.Get(string(in.GetKey()))
 
 	if err != nil {
 		return &pb.GetResponse{Success: false, Key: []byte(in.GetKey())}, err
@@ -168,7 +187,10 @@ func (s *server) Get(ctx context.Context, in *pb.GetRequest) (*pb.GetResponse, e
 		return &pb.GetResponse{Success: true, Key: []byte(in.GetKey()), Value: nil}, nil
 	}
 
-	return &pb.GetResponse{Success: true, Key: []byte(in.GetKey()), Value: []byte(value.Value)}, nil
+	var encoded *EncodedEntry
+	err = json.Unmarshal([]byte(value.Value), &encoded)
+
+	return &pb.GetResponse{Success: true, Key: []byte(in.GetKey()), Value: []byte(encoded.Value)}, nil
 }
 
 func (s *server) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {

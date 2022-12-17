@@ -29,8 +29,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println(cfg.Directory)
-
 	server, err := service.NewServer(cfg.Id, cfg.URL, cfg.Directory, sugar)
 
 	if err != nil {

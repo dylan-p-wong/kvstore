@@ -50,11 +50,15 @@ func (s *server) GetLastLogIndex() int {
 	return len(s.raftState.log)
 }
 
-func encodeCommand(key string, value string) (string, error) {
-	if key == "voted_for" || key == "current_term" {
-		return "", errors.New("cannot use voted_for or current_term as key")
+func (s *server) GetLastLogTerm() int {
+	if len(s.raftState.log) == 0 {
+		return 0
 	}
 
+	return s.raftState.log[len(s.raftState.log) - 1].term
+}
+
+func encodeCommand(key string, value string) (string, error) {
 	return key + ":" + value, nil
 }
 
