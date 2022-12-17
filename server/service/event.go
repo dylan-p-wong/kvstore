@@ -95,13 +95,20 @@ func (s *server) candidateLoop() {
 
 			// Increment current term
 			s.raftState.currentTerm++
-			_ = s.persistCurrentTerm() // TODO: handle error
+			err := s.persistCurrentTerm()
+			if err != nil {
+				panic(err) // TODO: is there something else we should do?
+			}
 
 			// votes for itself
 			s.raftState.votedFor = s.id
 			votesGranted = 1
+
 			// persist votedFor
-			_ = s.persistVotedFor() // TODO: handle error
+			err = s.persistVotedFor()
+			if err != nil {
+				panic(err) // TODO: is there something else we should do?
+			}
 
 			requestVoteResponseChannel = make(chan *pb.RequestVoteResponse, len(s.peers))
 			for _, p := range s.peers {
@@ -256,9 +263,13 @@ func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) Event
 
 	// if votedFor is null or candidateId AND TODO(candidate log is at least as up to date as reciever log) grant vote
 	if s.raftState.votedFor == -1 || s.raftState.votedFor != s.id {
+		// set voted for to candidate
 		s.raftState.votedFor = int(request.CandidateId)
 		// persist votedFor
-		_ = s.persistVotedFor() // TODO: handle error
+		err := s.persistVotedFor()
+		if err != nil {
+			panic(err) // TODO: is there something else we should do?
+		}
 
 		response.Response = &pb.RequestVoteResponse{
 			Term:        uint64(s.raftState.currentTerm),

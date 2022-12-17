@@ -74,7 +74,7 @@ func (s *server) restoreFromStorage() error {
 }
 
 func (s *server) persistCurrentTerm() error {
-	err := s.raftStorage.Set(_currentTermKey, strconv.Itoa(s.raftState.votedFor))
+	err := s.raftStorage.Set(_currentTermKey, strconv.Itoa(s.raftState.currentTerm))
 	s.sugar.Infow("persisted current term", "error", err)
 	return err
 }

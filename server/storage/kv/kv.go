@@ -27,7 +27,11 @@ func New(dir string) (*KV, error) {
 	}
 
 	// load memtable
-	memTable := wal.LoadMemtable()
+	memTable, err := wal.LoadMemtable()
+
+	if err != nil {
+		return nil, err
+	}
 
 	return &KV{wal: wal, memTable: memTable}, nil
 }

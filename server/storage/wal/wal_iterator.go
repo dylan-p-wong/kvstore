@@ -15,12 +15,16 @@ type WALIterator struct {
 	file *os.File
 }
 
-func (wal *WAL) NewIterator() *WALIterator {
-	_, _ = wal.file.Seek(0, 0)
+func (wal *WAL) NewIterator() (*WALIterator, error) {
+	_, err := wal.file.Seek(0, 0)
+
+	if err != nil {
+		return nil, err
+	}
 
 	return &WALIterator{
 		file: wal.file,
-	}
+	}, nil
 }
 
 func (iter *WALIterator) Next() (*WALEntry, error) {

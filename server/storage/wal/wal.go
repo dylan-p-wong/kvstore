@@ -38,10 +38,14 @@ func New(directory string) (*WAL, error) {
 	}, nil
 }
 
-func (wal *WAL) LoadMemtable() *memtable.MemTable {
+func (wal *WAL) LoadMemtable() (*memtable.MemTable, error) {
 	mt := memtable.New()
 
- 	walIter := wal.NewIterator()
+ 	walIter, err := wal.NewIterator()
+
+	if err != nil {
+		return nil, err
+	}
 
 	for {
 		entry, err := walIter.Next()
@@ -53,7 +57,7 @@ func (wal *WAL) LoadMemtable() *memtable.MemTable {
 		mt.Set(entry.Key, entry.Value, entry.Timestamp)
 	}
 
-	return mt
+	return mt, nil
 }
 
 func (wal *WAL) Set(key string, value string, timestamp time.Time) error {

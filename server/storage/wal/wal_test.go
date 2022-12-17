@@ -36,7 +36,8 @@ func TestWALIterator1(t *testing.T) {
 	err = wal.Set("key1", "value1", timestamp)
 	assert.NoError(t, err)
 
-	iterator := wal.NewIterator()
+	iterator, err := wal.NewIterator()
+	assert.NoError(t, err)
 
 	entry, err := iterator.Next()
 	assert.NoError(t, err)
@@ -63,7 +64,8 @@ func TestWALIterator2(t *testing.T) {
 	err = wal.Delete("key1", timestamp)
 	assert.NoError(t, err)
 
-	iterator := wal.NewIterator()
+	iterator, err := wal.NewIterator()
+	assert.NoError(t, err)
 
 	entry, err := iterator.Next()
 	assert.NoError(t, err)
@@ -96,7 +98,8 @@ func TestWALIterator3(t *testing.T) {
 	err = wal.Delete("key3", timestamp)
 	assert.NoError(t, err)
 
-	iterator := wal.NewIterator()
+	iterator, err := wal.NewIterator()
+	assert.NoError(t, err)
 
 	entry, err := iterator.Next()
 	assert.NoError(t, err)
