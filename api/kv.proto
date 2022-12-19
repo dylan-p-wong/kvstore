@@ -9,6 +9,7 @@ service KV {
   // Client
   rpc Put(PutRequest) returns (PutResponse) {}
   rpc Get(GetRequest) returns (GetResponse) {}
+  rpc Delete(DeleteRequest) returns (DeleteResponse) {}
 
   // Raft
   rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse) {}
@@ -32,6 +33,14 @@ message GetResponse {
   bool success = 1;
   bytes key = 2;
   bytes value = 3;
+}
+
+message DeleteRequest {
+  bytes key = 1;
+}
+
+message DeleteResponse {
+  bool success = 1;
 }
 
 message LogEntry {

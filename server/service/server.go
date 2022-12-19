@@ -176,6 +176,19 @@ func (s *server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, e
 	return &pb.PutResponse{Success: true}, nil
 }
 
+func (s *server) Delete(ctx context.Context, in *pb.DeleteRequest) (*pb.DeleteResponse, error) {
+	s.sugar.Infow("received DELETE request", "request", in)
+
+	// we basiclly put with an empty key
+	_, err := s.send(&pb.PutRequest{Key: in.GetKey(), Value: []byte("")})
+
+	if err != nil {
+		return &pb.DeleteResponse{Success: false}, err
+	}
+
+	return &pb.DeleteResponse{Success: true}, nil
+}
+
 func (s *server) Get(ctx context.Context, in *pb.GetRequest) (*pb.GetResponse, error) {
 	value, err := s.logStorage.Get(string(in.GetKey()))
 
@@ -189,6 +202,10 @@ func (s *server) Get(ctx context.Context, in *pb.GetRequest) (*pb.GetResponse, e
 
 	var encoded *EncodedEntry
 	err = json.Unmarshal([]byte(value.Value), &encoded)
+
+	if err != nil {
+		return &pb.GetResponse{Success: false, Key: []byte(in.GetKey())}, err
+	}
 
 	return &pb.GetResponse{Success: true, Key: []byte(in.GetKey()), Value: []byte(encoded.Value)}, nil
 }

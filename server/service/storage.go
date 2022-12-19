@@ -54,7 +54,7 @@ func (s *server) restoreFromStorage() error {
 		if err != nil {
 			return err
 		}
-		
+
 		le := newLogEntry(encoded.Term, encoded.Index, command, make(chan EventResponse))
 		s.raftState.log = append(s.raftState.log, &le)
 	}
@@ -66,8 +66,8 @@ func (s *server) restoreFromStorage() error {
 
 	if len(s.raftState.log) > 0 {
 		// we know these are the highest index applied
-		s.raftState.commitIndex = s.raftState.log[len(s.raftState.log) - 1].index
-		s.raftState.lastApplied = s.raftState.log[len(s.raftState.log) - 1].index
+		s.raftState.commitIndex = s.raftState.log[len(s.raftState.log)-1].index
+		s.raftState.lastApplied = s.raftState.log[len(s.raftState.log)-1].index
 	}
 
 	return nil
@@ -94,7 +94,7 @@ type EncodedEntry struct {
 func (s *server) persistLogEntry(le *LogEntry) error {
 	key, value, err := decodeCommand(le.command)
 
-	encoded := &EncodedEntry{Value: value, Index: le.index, Term: le.term }
+	encoded := &EncodedEntry{Value: value, Index: le.index, Term: le.term}
 
 	encodedBytes, err := json.Marshal(encoded)
 
@@ -103,6 +103,7 @@ func (s *server) persistLogEntry(le *LogEntry) error {
 	}
 
 	err = s.logStorage.Set(key, string(encodedBytes))
+
 	s.sugar.Infow("persisted log entry", "error", err)
 	return err
 }
