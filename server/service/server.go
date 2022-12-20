@@ -207,6 +207,10 @@ func (s *server) Get(ctx context.Context, in *pb.GetRequest) (*pb.GetResponse, e
 		return &pb.GetResponse{Success: false, Key: []byte(in.GetKey())}, err
 	}
 
+	if encoded.Value == "" {
+		return &pb.GetResponse{Success: true, Key: []byte(in.GetKey())}, errors.New("not found")
+	}
+
 	return &pb.GetResponse{Success: true, Key: []byte(in.GetKey()), Value: []byte(encoded.Value)}, nil
 }
 
