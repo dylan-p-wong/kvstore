@@ -1,22 +1,22 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
-	"strings"
 )
 
 type LogEntry struct {
-	term  int
-	index int
-	command string
+	term            int
+	index           int
+	command         string
 	responseChannel chan EventResponse
 }
 
 func newLogEntry(term int, index int, command string, responseChannel chan EventResponse) LogEntry {
 	return LogEntry{
-		term:  term,
-		index: index,
-		command: command,
+		term:            term,
+		index:           index,
+		command:         command,
 		responseChannel: responseChannel,
 	}
 }
@@ -55,19 +55,32 @@ func (s *server) GetLastLogTerm() int {
 		return 0
 	}
 
-	return s.raftState.log[len(s.raftState.log) - 1].term
+	return s.raftState.log[len(s.raftState.log)-1].term
+}
+
+type Command struct {
+	Key   string
+	Value string
 }
 
 func encodeCommand(key string, value string) (string, error) {
-	return key + ":" + value, nil
+	command := &Command{Key: key, Value: value}
+	commandBytes, err := json.Marshal(command)
+
+	if err != nil {
+		return "", err
+	}
+
+	return string(commandBytes), nil
 }
 
 func decodeCommand(command string) (string, string, error) {
-	s := strings.Split(command, ":")
+	var encoded *Command
+	err := json.Unmarshal([]byte(command), &encoded)
 
-	if len(s) != 2 {
-		return "", "", errors.New("invalid command")
+	if err != nil {
+		return "", "", err
 	}
 
-	return s[0], s[1], nil
+	return encoded.Key, encoded.Value, nil
 }

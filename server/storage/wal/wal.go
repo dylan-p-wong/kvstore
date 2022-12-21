@@ -54,7 +54,11 @@ func (wal *WAL) LoadMemtable() (*memtable.MemTable, error) {
 			break;
 		}
 
-		mt.Set(entry.Key, entry.Value, entry.Timestamp)
+		if entry.Deleted {
+			mt.Delete(entry.Key, entry.Timestamp)
+		} else {
+			mt.Set(entry.Key, entry.Value, entry.Timestamp)
+		}
 	}
 
 	return mt, nil

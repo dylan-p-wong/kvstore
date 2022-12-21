@@ -44,7 +44,7 @@ func (mt *MemTable) Set(key string, value string, timestamp time.Time) {
 }
 
 func (mt *MemTable) Delete(key string, timestamp time.Time) {
-	// if new entry makes us over capacity we transform to SSTable and write to disk. We also wipe WAL.
+	// TODO: if new entry makes us over capacity we transform to SSTable and write to disk. We also wipe WAL.
 
 	// insert tombstone entry into entries array
 	mt.entries = append(mt.entries, MemTableEntry{Key: key, Timestamp: timestamp, Deleted: true})
