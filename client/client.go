@@ -20,6 +20,13 @@ func isLeaderNotFoundError(err error) bool {
 	return strings.Index(err.Error(), "not leader") != -1
 }
 
+func isConnectionRefusedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Index(err.Error(), "connection refused") != -1
+}
+
 type Client struct {
 	leader     int
 	config     ClientConfig
@@ -43,11 +50,13 @@ func (c *Client) getRandomServer() int {
 		keys = append(keys, k)
 	}
 
-	return keys[rand.Intn(len(keys))]
+	r := rand.Intn(len(keys))
+
+	return keys[r]
 }
 
 func (c *Client) getNewConnection() (*grpc.ClientConn, error) {
-	if c.leader == -1 {
+	if c.connection == nil || c.leader == -1 {
 		c.leader = c.getRandomServer()
 	}
 	if c.config.Servers[c.leader] == "" {
@@ -85,7 +94,7 @@ func (c *Client) Get(key string) (string, error) {
 
 	gr, err := client.Get(ctx, &pb.GetRequest{Key: []byte(key)})
 
-	if err == grpc.ErrServerStopped || err == grpc.ErrClientConnTimeout || err == grpc.ErrClientConnClosing {
+	if err == grpc.ErrServerStopped || err == grpc.ErrClientConnTimeout || err == grpc.ErrClientConnClosing || isConnectionRefusedError(err) {
 		c.connection.Close()
 		c.connection = nil
 		return "", err
@@ -113,7 +122,7 @@ func (c *Client) Put(key string, value string) error {
 
 	pr, err := client.Put(ctx, &pb.PutRequest{Key: []byte(key), Value: []byte(value)})
 
-	if err == grpc.ErrServerStopped || err == grpc.ErrClientConnTimeout || err == grpc.ErrClientConnClosing {
+	if err == grpc.ErrServerStopped || err == grpc.ErrClientConnTimeout || err == grpc.ErrClientConnClosing || isConnectionRefusedError(err) {
 		c.connection.Close()
 		c.connection = nil
 		return err
@@ -141,7 +150,7 @@ func (c *Client) Delete(key string) error {
 
 	dr, err := client.Delete(ctx, &pb.DeleteRequest{Key: []byte(key)})
 
-	if err == grpc.ErrServerStopped || err == grpc.ErrClientConnTimeout || err == grpc.ErrClientConnClosing {
+	if err == grpc.ErrServerStopped || err == grpc.ErrClientConnTimeout || err == grpc.ErrClientConnClosing || isConnectionRefusedError(err) {
 		c.connection.Close()
 		c.connection = nil
 		return err

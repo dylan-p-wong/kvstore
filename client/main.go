@@ -3,11 +3,15 @@ package main
 import (
 	"bufio"
 	"log"
+	"math/rand"
 	"os"
 	"strings"
+	"time"
 )
 
 func main() {
+	rand.Seed(time.Now().UnixNano())
+
 	config, err := LoadConfig()
 	if err != nil {
 		log.Printf("error: %v", err)

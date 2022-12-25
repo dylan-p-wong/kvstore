@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math/rand"
 	"path/filepath"
 	"sync"
 	"time"
@@ -28,8 +29,9 @@ const (
 )
 
 const (
-	DefaultHeartbeatInterval = 1000 * time.Millisecond
-	DefaultElectionTimeout   = 5000 * time.Millisecond
+	DefaultHeartbeatInterval         = 1000 * time.Millisecond
+	DefaultElectionTimeoutLowerBound = 4000 * time.Millisecond
+	DefaultElectionTimeoutUpperBound = 5000 * time.Millisecond
 )
 
 type raftState struct {
@@ -71,11 +73,12 @@ type server struct {
 	stopped      chan bool
 	routineGroup sync.WaitGroup
 
-	peers             map[int]*peer
-	id                int
-	url               string
-	heartbeatInterval time.Duration
-	electionTimeout   time.Duration
+	peers                     map[int]*peer
+	id                        int
+	url                       string
+	heartbeatInterval         time.Duration
+	electionTimeoutLowerBound time.Duration
+	electionTimeoutUpperBound time.Duration
 
 	sugar *zap.SugaredLogger
 
@@ -109,12 +112,13 @@ func NewServer(id int, url string, dir string, sugar *zap.SugaredLogger) (*serve
 	s := &server{
 		events: make(chan EventRequest),
 
-		raftState:         state,
-		peers:             make(map[int]*peer),
-		id:                id,
-		url:               url,
-		heartbeatInterval: DefaultHeartbeatInterval,
-		electionTimeout:   DefaultElectionTimeout,
+		raftState:                 state,
+		peers:                     make(map[int]*peer),
+		id:                        id,
+		url:                       url,
+		heartbeatInterval:         DefaultHeartbeatInterval,
+		electionTimeoutLowerBound: DefaultElectionTimeoutLowerBound,
+		electionTimeoutUpperBound: DefaultElectionTimeoutUpperBound,
 
 		sugar: sugar,
 
@@ -162,6 +166,11 @@ func (s *server) Start() error {
 	go s.monitorState()
 
 	return nil
+}
+
+func (s *server) getElectionTimeout() time.Duration {
+	r := rand.Intn(int(s.electionTimeoutUpperBound) - int(s.electionTimeoutLowerBound))
+	return s.electionTimeoutLowerBound + time.Duration(r)
 }
 
 func (s *server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, error) {
@@ -318,7 +327,7 @@ func (s *server) monitorState() {
 	}
 }
 
-// logging state
+// logging state helper
 func (s *server) logState() {
 	s.sugar.Infow("server state", "commitIndex", s.raftState.commitIndex, "lastApplied", s.raftState.lastApplied, "nextIndex", s.raftState.nextIndex, "matchIndex", s.raftState.matchIndex, "log", s.raftState.log)
 }

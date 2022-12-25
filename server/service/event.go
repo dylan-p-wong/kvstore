@@ -57,7 +57,7 @@ func (s *server) followerLoop() {
 	s.sugar.Infow("waiting for events", "state", "FOLLOWER")
 	for s.raftState.state == FOLLOWER {
 		// should be random between an interval
-		timeoutChannel := time.After(s.electionTimeout)
+		timeoutChannel := time.After(s.getElectionTimeout())
 
 		select {
 		case <-s.stopped:
@@ -125,8 +125,7 @@ func (s *server) candidateLoop() {
 				}(p)
 			}
 
-			// should be random between an interval
-			timeoutChannel = time.After(s.electionTimeout)
+			timeoutChannel = time.After(s.getElectionTimeout())
 			doVote = false
 		}
 
@@ -244,7 +243,12 @@ func (s *server) handleAllServerRequestResponseRules(term int, serverId int) {
 		}
 		s.raftState.state = FOLLOWER
 		s.raftState.leader = serverId
+
+		s.raftState.votedFor = -1
+		s.persistVotedFor()
+
 		s.raftState.currentTerm = int(term)
+		s.persistCurrentTerm()
 	}
 }
 
@@ -265,7 +269,7 @@ func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) Event
 	}
 
 	// if votedFor is null or candidateId AND TODO(candidate log is at least as up to date as reciever log) grant vote
-	if s.raftState.votedFor == -1 || s.raftState.votedFor != s.id {
+	if s.raftState.votedFor == -1 || s.raftState.votedFor == int(request.CandidateId) {
 		// set voted for to candidate
 		s.raftState.votedFor = int(request.CandidateId)
 		// persist votedFor
@@ -323,6 +327,7 @@ func (s *server) processPutRequest(request *pb.PutRequest, responseChannel chan 
 
 func (s *server) processRequestVoteResponse(response *pb.RequestVoteResponse) bool {
 	s.sugar.Infow("processing request vote response", "response", response)
+	s.handleAllServerRequestResponseRules(int(response.Term), -1)
 
 	if response.VoteGranted && response.Term == uint64(s.raftState.currentTerm) {
 		return true
