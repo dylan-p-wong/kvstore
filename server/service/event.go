@@ -57,7 +57,7 @@ func (s *server) followerLoop() {
 	s.sugar.Infow("waiting for events", "state", "FOLLOWER")
 	for s.raftState.state == FOLLOWER {
 		// should be random between an interval
-		timeoutChannel := time.After(s.electionTimeout)
+		timeoutChannel := time.After(s.getElectionTimeout())
 
 		select {
 		case <-s.stopped:
@@ -75,6 +75,7 @@ func (s *server) followerLoop() {
 		case <-timeoutChannel:
 			s.sugar.Infow("follower timeout")
 			s.raftState.state = CANDIDATE
+			s.raftState.leader = -1
 		}
 	}
 }
@@ -124,14 +125,14 @@ func (s *server) candidateLoop() {
 				}(p)
 			}
 
-			// should be random between an interval
-			timeoutChannel = time.After(s.electionTimeout)
+			timeoutChannel = time.After(s.getElectionTimeout())
 			doVote = false
 		}
 
 		if votesGranted == (len(s.peers)+1)/2+1 {
 			s.sugar.Infow("candidate promoted to leader", "votes_granted", votesGranted)
 			s.raftState.state = LEADER
+			s.raftState.leader = s.id
 			return
 		}
 
@@ -232,7 +233,7 @@ func (s *server) leaderLoop() {
 	}
 }
 
-func (s *server) handleAllServerRequestResponseRules(term int) {
+func (s *server) handleAllServerRequestResponseRules(term int, serverId int) {
 	// see rules for all servers in raft paper
 	if term > s.raftState.currentTerm {
 		if s.raftState.state == LEADER {
@@ -241,13 +242,19 @@ func (s *server) handleAllServerRequestResponseRules(term int) {
 			}
 		}
 		s.raftState.state = FOLLOWER
+		s.raftState.leader = serverId
+
+		s.raftState.votedFor = -1
+		s.persistVotedFor()
+
 		s.raftState.currentTerm = int(term)
+		s.persistCurrentTerm()
 	}
 }
 
 func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) EventResponse {
 	s.sugar.Infow("processing request vote request", "request", request)
-	s.handleAllServerRequestResponseRules(int(request.Term))
+	s.handleAllServerRequestResponseRules(int(request.Term), int(request.CandidateId))
 
 	var response EventResponse
 	response.Error = nil
@@ -262,7 +269,7 @@ func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) Event
 	}
 
 	// if votedFor is null or candidateId AND TODO(candidate log is at least as up to date as reciever log) grant vote
-	if s.raftState.votedFor == -1 || s.raftState.votedFor != s.id {
+	if s.raftState.votedFor == -1 || s.raftState.votedFor == int(request.CandidateId) {
 		// set voted for to candidate
 		s.raftState.votedFor = int(request.CandidateId)
 		// persist votedFor
@@ -320,7 +327,7 @@ func (s *server) processPutRequest(request *pb.PutRequest, responseChannel chan 
 
 func (s *server) processRequestVoteResponse(response *pb.RequestVoteResponse) bool {
 	s.sugar.Infow("processing request vote response", "response", response)
-	s.handleAllServerRequestResponseRules(int(response.Term))
+	s.handleAllServerRequestResponseRules(int(response.Term), -1)
 
 	if response.VoteGranted && response.Term == uint64(s.raftState.currentTerm) {
 		return true
@@ -333,7 +340,7 @@ func (s *server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) E
 	// we assume entries are sorted by index
 
 	s.sugar.Infow("processing append entries request", "request", request)
-	s.handleAllServerRequestResponseRules(int(request.Term))
+	s.handleAllServerRequestResponseRules(int(request.Term), int(request.LeaderId))
 
 	var response EventResponse
 	response.Error = nil
@@ -423,7 +430,8 @@ func (s *server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) E
 
 func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse) EventResponse {
 	s.sugar.Infow("processing append entries response", "response", response)
-	s.handleAllServerRequestResponseRules(int(response.Term))
+
+	s.handleAllServerRequestResponseRules(int(response.Term), int(response.ServerId))
 	// if handleAllServerRequestResponseRules changed state
 	if s.raftState.state != LEADER {
 		return EventResponse{Error: errors.New("not leader")}

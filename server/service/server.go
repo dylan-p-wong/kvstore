@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math/rand"
 	"path/filepath"
 	"sync"
 	"time"
@@ -28,13 +29,15 @@ const (
 )
 
 const (
-	DefaultHeartbeatInterval = 1000 * time.Millisecond
-	DefaultElectionTimeout   = 5000 * time.Millisecond
+	DefaultHeartbeatInterval         = 1000 * time.Millisecond
+	DefaultElectionTimeoutLowerBound = 4000 * time.Millisecond
+	DefaultElectionTimeoutUpperBound = 5000 * time.Millisecond
 )
 
 type raftState struct {
-	// State
-	state stateType
+	// State (LEADER, FOLLOWER, CANDIDATE, etc)
+	state  stateType
+	leader int
 
 	// Persistent state
 	currentTerm int
@@ -70,12 +73,12 @@ type server struct {
 	stopped      chan bool
 	routineGroup sync.WaitGroup
 
-	leader            int
-	peers             map[int]*peer
-	id                int
-	url               string
-	heartbeatInterval time.Duration
-	electionTimeout   time.Duration
+	peers                     map[int]*peer
+	id                        int
+	url                       string
+	heartbeatInterval         time.Duration
+	electionTimeoutLowerBound time.Duration
+	electionTimeoutUpperBound time.Duration
 
 	sugar *zap.SugaredLogger
 
@@ -109,12 +112,13 @@ func NewServer(id int, url string, dir string, sugar *zap.SugaredLogger) (*serve
 	s := &server{
 		events: make(chan EventRequest),
 
-		raftState:         state,
-		peers:             make(map[int]*peer),
-		id:                id,
-		url:               url,
-		heartbeatInterval: DefaultHeartbeatInterval,
-		electionTimeout:   DefaultElectionTimeout,
+		raftState:                 state,
+		peers:                     make(map[int]*peer),
+		id:                        id,
+		url:                       url,
+		heartbeatInterval:         DefaultHeartbeatInterval,
+		electionTimeoutLowerBound: DefaultElectionTimeoutLowerBound,
+		electionTimeoutUpperBound: DefaultElectionTimeoutUpperBound,
 
 		sugar: sugar,
 
@@ -164,8 +168,18 @@ func (s *server) Start() error {
 	return nil
 }
 
+func (s *server) getElectionTimeout() time.Duration {
+	r := rand.Intn(int(s.electionTimeoutUpperBound) - int(s.electionTimeoutLowerBound))
+	return s.electionTimeoutLowerBound + time.Duration(r)
+}
+
 func (s *server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, error) {
 	s.sugar.Infow("received PUT request", "request", in)
+
+	// put requests must be sent to the leader. we help the client by return the current leader
+	if s.raftState.state != LEADER {
+		return &pb.PutResponse{Success: false, Leader: uint64(s.raftState.leader)}, errors.New("not leader")
+	}
 
 	_, err := s.send(in)
 
@@ -179,6 +193,11 @@ func (s *server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, e
 func (s *server) Delete(ctx context.Context, in *pb.DeleteRequest) (*pb.DeleteResponse, error) {
 	s.sugar.Infow("received DELETE request", "request", in)
 
+	// delete requests must be sent to the leader. we help the client by return the current leader
+	if s.raftState.state != LEADER {
+		return &pb.DeleteResponse{Success: false, Leader: uint64(s.raftState.leader)}, errors.New("not leader")
+	}
+
 	// we basiclly put with an empty key
 	_, err := s.send(&pb.PutRequest{Key: in.GetKey(), Value: []byte("")})
 
@@ -190,14 +209,22 @@ func (s *server) Delete(ctx context.Context, in *pb.DeleteRequest) (*pb.DeleteRe
 }
 
 func (s *server) Get(ctx context.Context, in *pb.GetRequest) (*pb.GetResponse, error) {
+
+	// get requests must be sent to the leader. we help the client by return the current leader
+	if s.raftState.state != LEADER {
+		return &pb.GetResponse{Success: false, Leader: uint64(s.raftState.leader)}, errors.New("not leader")
+	}
+
 	value, err := s.logStorage.Get(string(in.GetKey()))
 
+	// there was an error getting from persistence
 	if err != nil {
 		return &pb.GetResponse{Success: false, Key: []byte(in.GetKey())}, err
 	}
 
+	// if there is no entry with this key in the persister
 	if value == nil {
-		return &pb.GetResponse{Success: true, Key: []byte(in.GetKey()), Value: nil}, nil
+		return &pb.GetResponse{Success: true, Key: []byte(in.GetKey())}, errors.New("not found")
 	}
 
 	var encoded *EncodedEntry
@@ -300,7 +327,7 @@ func (s *server) monitorState() {
 	}
 }
 
-// logging state
+// logging state helper
 func (s *server) logState() {
 	s.sugar.Infow("server state", "commitIndex", s.raftState.commitIndex, "lastApplied", s.raftState.lastApplied, "nextIndex", s.raftState.nextIndex, "matchIndex", s.raftState.matchIndex, "log", s.raftState.log)
 }

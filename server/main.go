@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
+	"time"
 
 	pb "github.com/dylan-p-wong/kvstore/api"
 	"github.com/dylan-p-wong/kvstore/server/config"
@@ -14,6 +16,9 @@ import (
 )
 
 func main() {
+	// for random election timeouts
+	rand.Seed(time.Now().UnixNano())
+
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		os.Exit(1)

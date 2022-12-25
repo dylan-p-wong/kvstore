@@ -2,32 +2,27 @@ package main
 
 import (
 	"bufio"
-	"context"
-	"flag"
 	"log"
+	"math/rand"
 	"os"
 	"strings"
 	"time"
-
-	pb "github.com/dylan-p-wong/kvstore/api"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-)
-
-var (
-	addr = flag.String("addr", "127.0.0.1:4444", "the address to connect to")
 )
 
 func main() {
-	flag.Parse()
+	rand.Seed(time.Now().UnixNano())
 
-	// Set up a connection to the server.
-	conn, err := grpc.Dial(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	config, err := LoadConfig()
 	if err != nil {
-		log.Fatalf("did not connect: %v", err)
+		log.Printf("error: %v", err)
+		os.Exit(1)
 	}
-	defer conn.Close()
-	c := pb.NewKVClient(conn)
+
+	client, err := NewClient(config)
+	if err != nil {
+		log.Printf("error: %v", err)
+		os.Exit(1)
+	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
@@ -48,50 +43,48 @@ func main() {
 
 			key := s[1]
 
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
+			value, err := client.Get(key)
 
-			gr, err := c.Get(ctx, &pb.GetRequest{Key: []byte(key)})
+			// retry if error due to incorrect leader
+			if isLeaderNotFoundError(err) {
+				value, err = client.Get(key)
+			}
+
 			if err != nil {
-				log.Printf("could not get: %v", err)
+				log.Printf("GET error: %v", err)
 			} else {
-				log.Printf("get: (%s, %s)", gr.GetKey(), gr.GetValue())
+				log.Printf("GET value: %s", value)
 			}
 		} else if op == "PUT" {
 			if len(s) != 3 {
 				log.Printf("invalid number of args")
 				continue
 			}
-
 			key := s[1]
 			value := s[2]
 
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
+			err := client.Put(key, value)
 
-			pr, err := c.Put(ctx, &pb.PutRequest{Key: []byte(key), Value: []byte(value)})
-			if err != nil {
-				log.Printf("could not put: %v", err)
-			} else {
-				log.Printf("put: %t", pr.GetSuccess())
+			// retry if error due to incorrect leader
+			if isLeaderNotFoundError(err) {
+				err = client.Put(key, value)
 			}
+
+			log.Printf("PUT error: %v", err)
 		} else if op == "DELETE" {
 			if len(s) != 2 {
 				log.Printf("invalid number of args")
 				continue
 			}
-
 			key := s[1]
+			err := client.Delete(key)
 
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-
-			pr, err := c.Delete(ctx, &pb.DeleteRequest{Key: []byte(key)})
-			if err != nil {
-				log.Printf("could not delete: %v", err)
-			} else {
-				log.Printf("delete: %t", pr.GetSuccess())
+			// retry if error due to incorrect leader
+			if isLeaderNotFoundError(err) {
+				err = client.Delete(key)
 			}
+
+			log.Printf("DELETE error: %v", err)
 		} else {
 			log.Printf("invalid operation")
 			continue
