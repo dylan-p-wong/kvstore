@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	pb "github.com/dylan-p-wong/kvstore/api"
+	"github.com/dylan-p-wong/kvstore/client/config"
 )
 
 func isLeaderNotFoundError(err error) bool {
@@ -29,11 +30,11 @@ func isConnectionRefusedError(err error) bool {
 
 type Client struct {
 	leader     int
-	config     ClientConfig
+	config     config.ClientConfig
 	connection *grpc.ClientConn
 }
 
-func NewClient(config ClientConfig) (*Client, error) {
+func NewClient(config config.ClientConfig) (*Client, error) {
 	return &Client{leader: -1, config: config}, nil
 }
 
@@ -56,7 +57,7 @@ func (c *Client) getRandomServer() int {
 }
 
 func (c *Client) getNewConnection() (*grpc.ClientConn, error) {
-	if c.connection == nil || c.leader == -1 {
+	if c.leader == -1 {
 		c.leader = c.getRandomServer()
 	}
 	if c.config.Servers[c.leader] == "" {
