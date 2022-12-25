@@ -13,6 +13,13 @@ import (
 	pb "github.com/dylan-p-wong/kvstore/api"
 )
 
+func isLeaderNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Index(err.Error(), "not leader") != -1
+}
+
 type Client struct {
 	leader     int
 	config     ClientConfig
@@ -23,7 +30,13 @@ func NewClient(config ClientConfig) (*Client, error) {
 	return &Client{leader: -1, config: config}, nil
 }
 
-func (c *Client) GetRandomServer() int {
+func (c *Client) handleLeaderSwitch(newLeader int) {
+	c.connection.Close()
+	c.connection = nil
+	c.leader = newLeader
+}
+
+func (c *Client) getRandomServer() int {
 	keys := make([]int, 0)
 
 	for k := range c.config.Servers {
@@ -33,9 +46,9 @@ func (c *Client) GetRandomServer() int {
 	return keys[rand.Intn(len(keys))]
 }
 
-func (c *Client) GetNewConnection() (*grpc.ClientConn, error) {
+func (c *Client) getNewConnection() (*grpc.ClientConn, error) {
 	if c.leader == -1 {
-		c.leader = c.GetRandomServer()
+		c.leader = c.getRandomServer()
 	}
 	if c.config.Servers[c.leader] == "" {
 		c.leader = -1
@@ -49,9 +62,9 @@ func (c *Client) GetNewConnection() (*grpc.ClientConn, error) {
 	return connection, nil
 }
 
-func (c *Client) GetProtoClient() (pb.KVClient, error) {
+func (c *Client) getProtoClient() (pb.KVClient, error) {
 	if c.connection == nil {
-		conn, err := c.GetNewConnection()
+		conn, err := c.getNewConnection()
 		if err != nil {
 			return nil, err
 		}
@@ -65,7 +78,7 @@ func (c *Client) Get(key string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	client, err := c.GetProtoClient()
+	client, err := c.getProtoClient()
 	if err != nil {
 		return "", err
 	}
@@ -79,10 +92,8 @@ func (c *Client) Get(key string) (string, error) {
 	}
 
 	if err != nil {
-		if strings.Index(err.Error(), "not leader") != -1 {
-			c.connection.Close()
-			c.connection = nil
-			c.leader = int(gr.GetLeader())
+		if isLeaderNotFoundError(err) {
+			c.handleLeaderSwitch(int(gr.GetLeader()))
 			return "", err
 		}
 		return "", err
@@ -95,7 +106,7 @@ func (c *Client) Put(key string, value string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	client, err := c.GetProtoClient()
+	client, err := c.getProtoClient()
 	if err != nil {
 		return err
 	}
@@ -109,10 +120,8 @@ func (c *Client) Put(key string, value string) error {
 	}
 
 	if err != nil {
-		if strings.Index(err.Error(), "not leader") != -1 {
-			c.connection.Close()
-			c.connection = nil
-			c.leader = int(pr.GetLeader())
+		if isLeaderNotFoundError(err) {
+			c.handleLeaderSwitch(int(pr.GetLeader()))
 			return err
 		}
 		return err
@@ -125,7 +134,7 @@ func (c *Client) Delete(key string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	client, err := c.GetProtoClient()
+	client, err := c.getProtoClient()
 	if err != nil {
 		return err
 	}
@@ -139,10 +148,8 @@ func (c *Client) Delete(key string) error {
 	}
 
 	if err != nil {
-		if strings.Index(err.Error(), "not leader") != -1 {
-			c.connection.Close()
-			c.connection = nil
-			c.leader = int(dr.GetLeader())
+		if isLeaderNotFoundError(err) {
+			c.handleLeaderSwitch(int(dr.GetLeader()))
 			return err
 		}
 		return err
