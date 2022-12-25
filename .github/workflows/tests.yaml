@@ -1,0 +1,27 @@
+name: Go package
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.18
+
+      - name: Build Server
+        run: go build -v ./server/...
+
+      - name: Test Server
+        run: go test -v ./server/...
+
+      - name: Build Client
+        run: go build -v ./client/...
+
+      - name: Test Client
+        run: go test -v ./client/...
