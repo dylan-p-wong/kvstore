@@ -25,7 +25,7 @@ func isConnectionRefusedError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Index(err.Error(), "connection refused") != -1
+	return strings.Index(err.Error(), "connection error") != -1
 }
 
 type Client struct {
@@ -96,8 +96,7 @@ func (c *Client) Get(key string) (string, error) {
 	gr, err := client.Get(ctx, &pb.GetRequest{Key: []byte(key)})
 
 	if err == grpc.ErrServerStopped || err == grpc.ErrClientConnTimeout || err == grpc.ErrClientConnClosing || isConnectionRefusedError(err) {
-		c.connection.Close()
-		c.connection = nil
+		c.handleLeaderSwitch(-1)
 		return "", err
 	}
 
@@ -124,8 +123,7 @@ func (c *Client) Put(key string, value string) error {
 	pr, err := client.Put(ctx, &pb.PutRequest{Key: []byte(key), Value: []byte(value)})
 
 	if err == grpc.ErrServerStopped || err == grpc.ErrClientConnTimeout || err == grpc.ErrClientConnClosing || isConnectionRefusedError(err) {
-		c.connection.Close()
-		c.connection = nil
+		c.handleLeaderSwitch(-1)
 		return err
 	}
 
@@ -152,8 +150,7 @@ func (c *Client) Delete(key string) error {
 	dr, err := client.Delete(ctx, &pb.DeleteRequest{Key: []byte(key)})
 
 	if err == grpc.ErrServerStopped || err == grpc.ErrClientConnTimeout || err == grpc.ErrClientConnClosing || isConnectionRefusedError(err) {
-		c.connection.Close()
-		c.connection = nil
+		c.handleLeaderSwitch(-1)
 		return err
 	}
 
