@@ -252,10 +252,12 @@ func TestProcessRequestVoteRequest(t *testing.T) {
 		s.raftState.votedFor = tt.votedFor
 		s.raftState.log = tt.log
 
+		// copy before since nothing else should change
+		expectedRaftState := s.raftState
+
 		eventResponse := s.processRequestVoteRequest(tt.request)
 
-		// copy raft state and set expected changed fields
-		expectedRaftState := s.raftState
+		// set expected changed fields
 		expectedRaftState.votedFor = tt.expectedVotedFor
 		assert.Equal(t, expectedRaftState, s.raftState)
 
@@ -311,9 +313,214 @@ func TestProcessRequestVoteResponse(t *testing.T) {
 	}
 }
 
-// func TestProcessAppendEntriesRequest(t *testing.T) {
+func TestProcessAppendEntriesRequest(t *testing.T) {
+	tests := []struct {
+		name string
 
-// }
+		currentTerm int
+		commitIndex int
+		log         []*LogEntry
+
+		request *pb.AppendEntriesRequest
+
+		expectedEventResponse EventResponse
+
+		expectedCurrentTerm int
+		expectedCommitIndex int
+		expectedLastApplied int
+		expectedLog         []*LogEntry
+	}{
+		{
+			name:        "request.Term < currentTerm",
+			currentTerm: 2,
+			commitIndex: 100,
+			log:         []*LogEntry{},
+			request: &pb.AppendEntriesRequest{
+				Term:         1,
+				LeaderId:     100,
+				PrevLogIndex: 100,
+				PrevLogTerm:  100,
+				Entries:      []*pb.LogEntry{},
+				LeaderCommit: 100,
+			},
+			expectedEventResponse: EventResponse{
+				Response: &pb.AppendEntriesResponse{
+					Term:         2,
+					Success:      false,
+					ServerId:     0,
+					PrevLogIndex: 100,
+					Entries:      []*pb.LogEntry{},
+				},
+				Error: nil,
+			},
+			expectedCurrentTerm: 2,
+			expectedCommitIndex: 100,
+			expectedLastApplied: 0,
+			expectedLog:         []*LogEntry{},
+		},
+		{
+			name:        "log does not contain an entry at prevLogIndex whose term matches prevLogTerm (log is empty)",
+			currentTerm: 2,
+			commitIndex: 100,
+			log:         []*LogEntry{},
+			request: &pb.AppendEntriesRequest{
+				Term:         2,
+				LeaderId:     100,
+				PrevLogIndex: 100,
+				PrevLogTerm:  100,
+				Entries:      []*pb.LogEntry{},
+				LeaderCommit: 100,
+			},
+			expectedEventResponse: EventResponse{
+				Response: &pb.AppendEntriesResponse{
+					Term:         2,
+					Success:      false,
+					ServerId:     0,
+					PrevLogIndex: 100,
+					Entries:      []*pb.LogEntry{},
+				},
+				Error: nil,
+			},
+			expectedCurrentTerm: 2,
+			expectedCommitIndex: 100,
+			expectedLastApplied: 0,
+			expectedLog:         []*LogEntry{},
+		},
+		{
+			name:        "log does not contain an entry at prevLogIndex whose term matches prevLogTerm (log contains entries)",
+			currentTerm: 2,
+			commitIndex: 100,
+			log:         []*LogEntry{{term: 1, index: 1}},
+			request: &pb.AppendEntriesRequest{
+				Term:         2,
+				LeaderId:     100,
+				PrevLogIndex: 1,
+				PrevLogTerm:  2,
+				Entries:      []*pb.LogEntry{},
+				LeaderCommit: 100,
+			},
+			expectedEventResponse: EventResponse{
+				Response: &pb.AppendEntriesResponse{
+					Term:         2,
+					Success:      false,
+					ServerId:     0,
+					PrevLogIndex: 1,
+					Entries:      []*pb.LogEntry{},
+				},
+				Error: nil,
+			},
+			expectedCurrentTerm: 2,
+			expectedCommitIndex: 100,
+			expectedLastApplied: 0,
+			expectedLog:         []*LogEntry{{term: 1, index: 1}},
+		},
+		{
+			name:        "entry conflicts",
+			currentTerm: 2,
+			commitIndex: 0,
+			log:         []*LogEntry{{term: 1, index: 1}, {term: 1, index: 2}},
+			request: &pb.AppendEntriesRequest{
+				Term:         2,
+				LeaderId:     100,
+				PrevLogIndex: 1,
+				PrevLogTerm:  1,
+				Entries:      []*pb.LogEntry{{Term: 2, Index: 2}},
+				LeaderCommit: 0,
+			},
+			expectedEventResponse: EventResponse{
+				Response: &pb.AppendEntriesResponse{
+					Term:         2,
+					Success:      true,
+					ServerId:     0,
+					PrevLogIndex: 1,
+					Entries:      []*pb.LogEntry{{Term: 2, Index: 2}},
+				},
+				Error: nil,
+			},
+			expectedCurrentTerm: 2,
+			expectedCommitIndex: 0,
+			expectedLastApplied: 0,
+			expectedLog:         []*LogEntry{{term: 1, index: 1}, {term: 2, index: 2}},
+		},
+		{
+			name:        "append any new entries not already in log",
+			currentTerm: 2,
+			commitIndex: 0,
+			log:         []*LogEntry{{term: 1, index: 1}, {term: 1, index: 2}},
+			request: &pb.AppendEntriesRequest{
+				Term:         2,
+				LeaderId:     100,
+				PrevLogIndex: 1,
+				PrevLogTerm:  1,
+				Entries:      []*pb.LogEntry{{Term: 2, Index: 2}, {Term: 2, Index: 3}},
+				LeaderCommit: 0,
+			},
+			expectedEventResponse: EventResponse{
+				Response: &pb.AppendEntriesResponse{
+					Term:         2,
+					Success:      true,
+					ServerId:     0,
+					PrevLogIndex: 1,
+					Entries:      []*pb.LogEntry{{Term: 2, Index: 2}, {Term: 2, Index: 3}},
+				},
+				Error: nil,
+			},
+			expectedCurrentTerm: 2,
+			expectedCommitIndex: 0,
+			expectedLastApplied: 0,
+			expectedLog:         []*LogEntry{{term: 1, index: 1}, {term: 2, index: 2}, {term: 2, index: 3}},
+		},
+		{
+			name:        "leaderCommit > commitIndex and lastApplied < commitIndex",
+			currentTerm: 2,
+			commitIndex: -1,
+			log:         []*LogEntry{{term: 1, index: 1}, {term: 1, index: 2}},
+			request: &pb.AppendEntriesRequest{
+				Term:         2,
+				LeaderId:     100,
+				PrevLogIndex: 1,
+				PrevLogTerm:  1,
+				Entries:      []*pb.LogEntry{{Term: 2, Index: 2}, {Term: 2, Index: 3}},
+				LeaderCommit: 33,
+			},
+			expectedEventResponse: EventResponse{
+				Response: &pb.AppendEntriesResponse{
+					Term:         2,
+					Success:      true,
+					ServerId:     0,
+					PrevLogIndex: 1,
+					Entries:      []*pb.LogEntry{{Term: 2, Index: 2}, {Term: 2, Index: 3}},
+				},
+				Error: nil,
+			},
+			expectedCurrentTerm: 2,
+			expectedCommitIndex: 3, // length of log
+			expectedLastApplied: 3,
+			expectedLog:         []*LogEntry{{term: 1, index: 1}, {term: 2, index: 2}, {term: 2, index: 3}},
+		},
+	}
+
+	for _, tt := range tests {
+		s := NewTestServer(0)
+		s.raftState.currentTerm = tt.currentTerm
+		s.raftState.log = tt.log
+		s.raftState.commitIndex = tt.commitIndex
+
+		// copy before since nothing else should change
+		expectedRaftState := s.raftState
+
+		eventResponse := s.processAppendEntriesRequest(tt.request)
+
+		// set expected changed fields
+		expectedRaftState.currentTerm = tt.expectedCurrentTerm
+		expectedRaftState.log = tt.expectedLog
+		expectedRaftState.commitIndex = tt.expectedCommitIndex
+		expectedRaftState.lastApplied = tt.expectedLastApplied
+		assert.Equal(t, expectedRaftState, s.raftState)
+
+		assert.Equal(t, tt.expectedEventResponse, eventResponse)
+	}
+}
 
 // func TestProcessAppendEntriesResponse(t *testing.T) {
 

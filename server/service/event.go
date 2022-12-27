@@ -397,13 +397,13 @@ func (s *server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) E
 		}
 
 		if !duplicate {
-			newLe := newLogEntry(int(rle.Term), int(rle.Index), rle.CommandName, make(chan EventResponse))
+			newLe := newLogEntry(int(rle.Term), int(rle.Index), rle.CommandName, nil)
 			s.raftState.log = append(s.raftState.log, &newLe)
 		}
 	}
 
 	// 5. if leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
-	if request.LeaderCommit > uint64(s.raftState.commitIndex) {
+	if int(request.LeaderCommit) > s.raftState.commitIndex {
 		if int(request.LeaderCommit) < len(s.raftState.log) {
 			s.raftState.commitIndex = int(request.LeaderCommit)
 		} else {
@@ -485,8 +485,10 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 			s.raftState.lastApplied = s.raftState.commitIndex
 
 			// reply to waiting channel that the command has been replicated
-			s.raftState.log[commitedIndex-1].responseChannel <- EventResponse{
-				Error: nil,
+			if s.raftState.log[commitedIndex-1].responseChannel != nil { // will this case ever happen
+				s.raftState.log[commitedIndex-1].responseChannel <- EventResponse{
+					Error: nil,
+				}
 			}
 		}
 	}
