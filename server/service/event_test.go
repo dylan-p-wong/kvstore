@@ -205,7 +205,7 @@ func TestProcessRequestVoteRequest(t *testing.T) {
 			},
 		},
 		{
-			name: "voted for is -1",
+			name:        "voted for is -1",
 			currentTerm: 1,
 			votedFor:    -1,
 			log:         []*LogEntry{},
@@ -225,7 +225,7 @@ func TestProcessRequestVoteRequest(t *testing.T) {
 			},
 		},
 		{
-			name: "voted for is candidate id",
+			name:        "voted for is candidate id",
 			currentTerm: 1,
 			votedFor:    100,
 			log:         []*LogEntry{{term: 1, index: 1}},
@@ -263,9 +263,53 @@ func TestProcessRequestVoteRequest(t *testing.T) {
 	}
 }
 
-// func TestProcessRequestVoteResponse(t *testing.T) {
+func TestProcessRequestVoteResponse(t *testing.T) {
+	tests := []struct {
+		name string
 
-// }
+		currentTerm int
+
+		response *pb.RequestVoteResponse
+
+		expected bool
+	}{
+		{
+			name:        "vote not granted",
+			currentTerm: 1,
+			response: &pb.RequestVoteResponse{
+				Term:        1,
+				VoteGranted: false,
+			},
+			expected: false,
+		},
+		{
+			name:        "not the same term",
+			currentTerm: 2,
+			response: &pb.RequestVoteResponse{
+				Term:        1,
+				VoteGranted: true,
+			},
+			expected: false,
+		},
+		{
+			name:        "returns true",
+			currentTerm: 2,
+			response: &pb.RequestVoteResponse{
+				Term:        2,
+				VoteGranted: true,
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		s := NewTestServer(0)
+		s.raftState.currentTerm = tt.currentTerm
+
+		res := s.processRequestVoteResponse(tt.response)
+		assert.Equal(t, tt.expected, res)
+	}
+}
 
 // func TestProcessAppendEntriesRequest(t *testing.T) {
 
