@@ -195,7 +195,7 @@ func (s *server) leaderLoop() {
 				LeaderId:     uint64(s.id),
 				PrevLogIndex: uint64(p.getPrevLogIndex(s.raftState.nextIndex[p.id])),
 				PrevLogTerm:  uint64(p.getPrevLogTerm(s.raftState.nextIndex[p.id])),
-				Entries:      make([]*pb.LogEntry, 0),
+				Entries:      make([]*pb.LogEntry, 0), // empty to gain leadership
 				LeaderCommit: uint64(s.raftState.commitIndex),
 			})
 		}
@@ -218,7 +218,6 @@ func (s *server) leaderLoop() {
 			case *pb.PutRequest:
 				s.sugar.Infow("recieved PUT request", "state", "LEADER")
 				s.processPutRequest(event.Command.(*pb.PutRequest), event.ResponseChannel)
-				continue
 			case *pb.AppendEntriesRequest:
 				s.sugar.Infow("recieved append entries request", "state", "LEADER")
 				event.ResponseChannel <- s.processAppendEntriesRequest(event.Command.(*pb.AppendEntriesRequest))
@@ -231,65 +230,6 @@ func (s *server) leaderLoop() {
 			}
 		}
 	}
-}
-
-func (s *server) handleAllServerRequestResponseRules(term int, serverId int) {
-	// see rules for all servers in raft paper
-	if term > s.raftState.currentTerm {
-		if s.raftState.state == LEADER {
-			for _, p := range s.peers {
-				p.stopHeartbeat(false)
-			}
-		}
-		s.raftState.state = FOLLOWER
-		s.raftState.leader = serverId
-
-		s.raftState.votedFor = -1
-		s.persistVotedFor()
-
-		s.raftState.currentTerm = int(term)
-		s.persistCurrentTerm()
-	}
-}
-
-func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) EventResponse {
-	s.sugar.Infow("processing request vote request", "request", request)
-	s.handleAllServerRequestResponseRules(int(request.Term), int(request.CandidateId))
-
-	var response EventResponse
-	response.Error = nil
-
-	// reply false if term < currentTerm
-	if request.Term < uint64(s.raftState.currentTerm) {
-		response.Response = &pb.RequestVoteResponse{
-			Term:        uint64(s.raftState.currentTerm),
-			VoteGranted: false,
-		}
-		return response
-	}
-
-	// if votedFor is null or candidateId AND TODO(candidate log is at least as up to date as reciever log) grant vote
-	if s.raftState.votedFor == -1 || s.raftState.votedFor == int(request.CandidateId) {
-		// set voted for to candidate
-		s.raftState.votedFor = int(request.CandidateId)
-		// persist votedFor
-		err := s.persistVotedFor()
-		if err != nil {
-			panic(err) // TODO: is there something else we should do?
-		}
-
-		response.Response = &pb.RequestVoteResponse{
-			Term:        uint64(s.raftState.currentTerm),
-			VoteGranted: true,
-		}
-		return response
-	}
-
-	response.Response = &pb.RequestVoteResponse{
-		Term:        uint64(s.raftState.currentTerm),
-		VoteGranted: false,
-	}
-	return response
 }
 
 func (s *server) processPutRequest(request *pb.PutRequest, responseChannel chan EventResponse) {
@@ -323,6 +263,72 @@ func (s *server) processPutRequest(request *pb.PutRequest, responseChannel chan 
 	if len(s.peers) == 0 {
 		s.raftState.commitIndex = s.GetLastLogIndex()
 	}
+}
+
+func (s *server) handleAllServerRequestResponseRules(term int, serverId int) {
+	// see rules for all servers in raft paper
+	if term > s.raftState.currentTerm {
+		if s.raftState.state == LEADER {
+			for _, p := range s.peers {
+				p.stopHeartbeat(false)
+			}
+		}
+		s.raftState.state = FOLLOWER
+		s.raftState.leader = serverId
+
+		s.raftState.votedFor = -1
+		s.persistVotedFor()
+
+		s.raftState.currentTerm = int(term)
+		s.persistCurrentTerm()
+	}
+}
+
+func (s *server) candidateUpToDate(candidateLastLogTerm uint64, candidateLastLogIndex uint64) bool {
+	if uint64(s.GetLastLogTerm()) == candidateLastLogTerm {
+		return uint64(s.GetLastLogIndex()) <= candidateLastLogTerm
+	}
+	return uint64(s.GetLastLogTerm()) < candidateLastLogTerm
+}
+
+func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) EventResponse {
+	s.sugar.Infow("processing request vote request", "request", request)
+	s.handleAllServerRequestResponseRules(int(request.Term), int(request.CandidateId))
+
+	var response EventResponse
+	response.Error = nil
+
+	// reply false if term < currentTerm
+	if request.Term < uint64(s.raftState.currentTerm) {
+		response.Response = &pb.RequestVoteResponse{
+			Term:        uint64(s.raftState.currentTerm),
+			VoteGranted: false,
+		}
+		return response
+	}
+
+	// if votedFor is null or candidateId AND candidate log is at least as up to date as reciever log grant vote
+	if s.raftState.votedFor == -1 || s.raftState.votedFor == int(request.CandidateId) && s.candidateUpToDate(request.LastLogTerm, request.LastLogIndex) {
+		// set voted for to candidate
+		s.raftState.votedFor = int(request.CandidateId)
+		// persist votedFor
+		err := s.persistVotedFor()
+		if err != nil {
+			panic(err) // TODO: is there something else we should do?
+		}
+
+		response.Response = &pb.RequestVoteResponse{
+			Term:        uint64(s.raftState.currentTerm),
+			VoteGranted: true,
+		}
+		return response
+	}
+
+	response.Response = &pb.RequestVoteResponse{
+		Term:        uint64(s.raftState.currentTerm),
+		VoteGranted: false,
+	}
+	return response
 }
 
 func (s *server) processRequestVoteResponse(response *pb.RequestVoteResponse) bool {
@@ -412,8 +418,7 @@ func (s *server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) E
 		if err == nil {
 			s.raftState.lastApplied++
 		} else {
-			// TODO: revisit what to do on error
-			break
+			panic(err) // TODO: should we do something else?
 		}
 	}
 
@@ -463,7 +468,6 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 
 	commitedIndex := matchIndexes[(len(s.peers)+1)/2+1-1]
 
-	// TODO: revisit and see if we need to change to a loop
 	if commitedIndex > s.raftState.commitIndex {
 		if s.raftState.log[commitedIndex-1].term == s.raftState.currentTerm {
 			s.raftState.commitIndex = matchIndexes[(len(s.peers)+1)/2+1-1]
