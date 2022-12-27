@@ -288,7 +288,7 @@ func (s *server) candidateUpToDate(candidateLastLogTerm uint64, candidateLastLog
 	if uint64(s.GetLastLogTerm()) == candidateLastLogTerm {
 		return uint64(s.GetLastLogIndex()) <= candidateLastLogTerm
 	}
-	return uint64(s.GetLastLogTerm()) < candidateLastLogTerm
+	return uint64(s.GetLastLogTerm()) <= candidateLastLogTerm
 }
 
 func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) EventResponse {

@@ -110,10 +110,12 @@ func NewServer(id int, url string, dir string, sugar *zap.SugaredLogger) (*serve
 	s := &server{
 		events: make(chan EventRequest),
 
-		raftState:                 state,
-		peers:                     make(map[int]*peer),
-		id:                        id,
-		url:                       url,
+		raftState: state,
+
+		peers: make(map[int]*peer),
+		id:    id,
+		url:   url,
+
 		heartbeatInterval:         DefaultHeartbeatInterval,
 		electionTimeoutLowerBound: DefaultElectionTimeoutLowerBound,
 		electionTimeoutUpperBound: DefaultElectionTimeoutUpperBound,
