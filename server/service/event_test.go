@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	pb "github.com/dylan-p-wong/kvstore/api"
 )
 
 // func TestProcessPutRequest(t *testing.T) {
@@ -129,9 +131,137 @@ func TestCandidateUpToDate(t *testing.T) {
 	}
 }
 
-// func TestProcessRequestVoteRequest(t *testing.T) {
+func TestProcessRequestVoteRequest(t *testing.T) {
+	tests := []struct {
+		name string
 
-// }
+		currentTerm int
+		votedFor    int
+		log         []*LogEntry
+
+		request *pb.RequestVoteRequest
+
+		expectedVotedFor      int
+		expectedEventResponse EventResponse
+	}{
+		{
+			name:        "term < currentTerm",
+			currentTerm: 1,
+			votedFor:    -1,
+			log:         []*LogEntry{},
+			request: &pb.RequestVoteRequest{
+				Term:         0,
+				CandidateId:  1,
+				LastLogIndex: 0,
+				LastLogTerm:  0,
+			},
+			expectedVotedFor: -1,
+			expectedEventResponse: EventResponse{
+				Response: &pb.RequestVoteResponse{
+					Term:        1,
+					VoteGranted: false,
+				},
+				Error: nil,
+			},
+		},
+		{
+			name:        "voted for is NOT -1 and NOT candidate id",
+			currentTerm: 1,
+			votedFor:    100,
+			log:         []*LogEntry{},
+			request: &pb.RequestVoteRequest{
+				Term:         1,
+				CandidateId:  1,
+				LastLogIndex: 0,
+				LastLogTerm:  0,
+			},
+			expectedVotedFor: 100,
+			expectedEventResponse: EventResponse{
+				Response: &pb.RequestVoteResponse{
+					Term:        1,
+					VoteGranted: false,
+				},
+				Error: nil,
+			},
+		},
+		{
+			name:        "candidate log is NOT up to date",
+			currentTerm: 1,
+			votedFor:    100,
+			log:         []*LogEntry{{term: 1, index: 1}},
+			request: &pb.RequestVoteRequest{
+				Term:         1,
+				CandidateId:  100,
+				LastLogIndex: 0,
+				LastLogTerm:  0,
+			},
+			expectedVotedFor: 100,
+			expectedEventResponse: EventResponse{
+				Response: &pb.RequestVoteResponse{
+					Term:        1,
+					VoteGranted: false,
+				},
+				Error: nil,
+			},
+		},
+		{
+			name: "voted for is -1",
+			currentTerm: 1,
+			votedFor:    -1,
+			log:         []*LogEntry{},
+			request: &pb.RequestVoteRequest{
+				Term:         1,
+				CandidateId:  100,
+				LastLogIndex: 0,
+				LastLogTerm:  0,
+			},
+			expectedVotedFor: 100,
+			expectedEventResponse: EventResponse{
+				Response: &pb.RequestVoteResponse{
+					Term:        1,
+					VoteGranted: true,
+				},
+				Error: nil,
+			},
+		},
+		{
+			name: "voted for is candidate id",
+			currentTerm: 1,
+			votedFor:    100,
+			log:         []*LogEntry{{term: 1, index: 1}},
+			request: &pb.RequestVoteRequest{
+				Term:         1,
+				CandidateId:  100,
+				LastLogIndex: 2,
+				LastLogTerm:  1,
+			},
+			expectedVotedFor: 100,
+			expectedEventResponse: EventResponse{
+				Response: &pb.RequestVoteResponse{
+					Term:        1,
+					VoteGranted: true,
+				},
+				Error: nil,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		s := NewTestServer(0)
+		s.raftState.currentTerm = tt.currentTerm
+		s.raftState.votedFor = tt.votedFor
+		s.raftState.log = tt.log
+
+		eventResponse := s.processRequestVoteRequest(tt.request)
+
+		// copy raft state and set expected changed fields
+		expectedRaftState := s.raftState
+		expectedRaftState.votedFor = tt.expectedVotedFor
+		assert.Equal(t, expectedRaftState, s.raftState)
+
+		assert.Equal(t, tt.expectedEventResponse, eventResponse)
+	}
+}
 
 // func TestProcessRequestVoteResponse(t *testing.T) {
 
