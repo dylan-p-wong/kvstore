@@ -433,13 +433,16 @@ func (s *server) processAppendEntriesRequest(request *pb.AppendEntriesRequest) E
 	return response
 }
 
+var ErrNotLeader = errors.New("not leader")
+var ErrUnsuccessfulAppendEntries = errors.New("unsuccessful append entries request")
+
 func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse) EventResponse {
 	s.sugar.Infow("processing append entries response", "response", response)
 
 	s.handleAllServerRequestResponseRules(int(response.Term), int(response.ServerId))
 	// if handleAllServerRequestResponseRules changed state
 	if s.raftState.state != LEADER {
-		return EventResponse{Error: errors.New("not leader")}
+		return EventResponse{Error: ErrNotLeader}
 	}
 
 	// see leaders bullet 5
@@ -447,7 +450,7 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 	// retry will be done on the next peer heartbeat
 	if response.Success == false {
 		s.raftState.nextIndex[int(response.ServerId)]--
-		return EventResponse{Error: errors.New("unsuccessful append entries request")}
+		return EventResponse{Error: ErrUnsuccessfulAppendEntries}
 	}
 
 	// see leaders bullet 4
@@ -468,29 +471,27 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 
 	commitedIndex := matchIndexes[(len(s.peers)+1)/2+1-1]
 
-	if commitedIndex > s.raftState.commitIndex {
-		if s.raftState.log[commitedIndex-1].term == s.raftState.currentTerm {
-			s.raftState.commitIndex = matchIndexes[(len(s.peers)+1)/2+1-1]
-
+	for s.raftState.commitIndex < commitedIndex {
+		currentCommitedIndex := s.raftState.commitIndex
+		if s.raftState.log[currentCommitedIndex+1-1].term == s.raftState.currentTerm {
 			// sync log entry to disk
-			err := s.persistLogEntry(s.raftState.log[commitedIndex-1])
+			err := s.persistLogEntry(s.raftState.log[currentCommitedIndex+1-1])
 
 			// we had an error setting in storage
 			if err != nil {
-				return EventResponse{
-					Error: err,
-				}
+				panic(err)
 			}
 
-			s.raftState.lastApplied = s.raftState.commitIndex
+			s.raftState.lastApplied = currentCommitedIndex + 1
 
 			// reply to waiting channel that the command has been replicated
-			if s.raftState.log[commitedIndex-1].responseChannel != nil { // will this case ever happen
-				s.raftState.log[commitedIndex-1].responseChannel <- EventResponse{
+			if s.raftState.log[currentCommitedIndex+1-1].responseChannel != nil { // will this case ever happen
+				s.raftState.log[currentCommitedIndex+1-1].responseChannel <- EventResponse{
 					Error: nil,
 				}
 			}
 		}
+		s.raftState.commitIndex++
 	}
 
 	return EventResponse{Error: nil}

@@ -522,6 +522,156 @@ func TestProcessAppendEntriesRequest(t *testing.T) {
 	}
 }
 
-// func TestProcessAppendEntriesResponse(t *testing.T) {
+func TestProcessAppendEntriesResponse(t *testing.T) {
+	tests := []struct {
+		name string
 
-// }
+		peers map[int]*peer
+
+		state       stateType
+		currentTerm int
+		commitIndex int
+		lastApplied int
+		log         []*LogEntry
+		matchIndex  map[int]int
+		nextIndex   map[int]int
+
+		response *pb.AppendEntriesResponse
+
+		expectedEventResponse EventResponse
+
+		expectedCommitIndex int
+		expectedLastApplied int
+		expectedMatchIndex  map[int]int
+		expectedNextIndex   map[int]int
+	}{
+		{
+			name:        "append entries failed",
+			peers:       map[int]*peer{0: nil, 1: nil, 2: nil},
+			state:       LEADER,
+			currentTerm: 1,
+			commitIndex: 10,
+			lastApplied: 10,
+			log:         []*LogEntry{},
+			matchIndex:  map[int]int{0: 15, 1: 0, 2: 0},
+			nextIndex:   map[int]int{0: 15, 1: 13, 2: 13},
+			response: &pb.AppendEntriesResponse{
+				Term:         0,
+				Success:      false,
+				ServerId:     1,
+				PrevLogIndex: 100,
+				Entries:      []*pb.LogEntry{},
+			},
+			expectedEventResponse: EventResponse{
+				Error: ErrUnsuccessfulAppendEntries,
+			},
+			expectedCommitIndex: 10,
+			expectedLastApplied: 10,
+			expectedMatchIndex:  map[int]int{0: 15, 1: 0, 2: 0},
+			expectedNextIndex:   map[int]int{0: 15, 1: 12, 2: 13},
+		},
+		{
+			name:        "append entries success without commitedIndex increase",
+			peers:       map[int]*peer{1: nil, 2: nil, 3: nil, 4: nil},
+			state:       LEADER,
+			currentTerm: 1,
+			commitIndex: 0,
+			lastApplied: 0,
+			log:         []*LogEntry{},
+			matchIndex:  map[int]int{0: 15, 1: 0, 2: 0, 3: 0, 4: 0},
+			nextIndex:   map[int]int{0: 15, 1: 10, 2: 10, 3: 10, 4: 10},
+			response: &pb.AppendEntriesResponse{
+				Term:         1,
+				Success:      true,
+				ServerId:     1,
+				PrevLogIndex: 10,
+				Entries:      []*pb.LogEntry{{Term: 1, Index: 11}},
+			},
+			expectedEventResponse: EventResponse{
+				Error: nil,
+			},
+			expectedCommitIndex: 0,
+			expectedLastApplied: 0,
+			expectedMatchIndex:  map[int]int{0: 15, 1: 11, 2: 0, 3: 0, 4: 0},
+			expectedNextIndex:   map[int]int{0: 15, 1: 12, 2: 10, 3: 10, 4: 10},
+		},
+		{
+			name:        "append entries success without commitedIndex increase (entries of size 1)",
+			peers:       map[int]*peer{0: nil, 1: nil, 2: nil},
+			state:       LEADER,
+			currentTerm: 1,
+			commitIndex: 0,
+			lastApplied: 0,
+			log:         []*LogEntry{{term: 1, index: 1, command: "", responseChannel: nil}},
+			matchIndex:  map[int]int{0: 1, 1: 0, 2: 0},
+			nextIndex:   map[int]int{0: 2, 1: 0, 2: 0},
+			response: &pb.AppendEntriesResponse{
+				Term:         0,
+				Success:      true,
+				ServerId:     1,
+				PrevLogIndex: 0,
+				Entries:      []*pb.LogEntry{{Term: 1, Index: 1}},
+			},
+			expectedEventResponse: EventResponse{
+				Error: nil,
+			},
+			expectedCommitIndex: 1,
+			expectedLastApplied: 1,
+			expectedMatchIndex:  map[int]int{0: 1, 1: 1, 2: 0},
+			expectedNextIndex:   map[int]int{0: 2, 1: 2, 2: 0},
+		},
+		{
+			name:        "append entries success without commitedIndex increase (entries of size 2)",
+			peers:       map[int]*peer{0: nil, 1: nil, 2: nil},
+			state:       LEADER,
+			currentTerm: 1,
+			commitIndex: 0,
+			lastApplied: 0,
+			log:         []*LogEntry{{term: 1, index: 1, command: "", responseChannel: nil}, {term: 1, index: 2, command: "", responseChannel: nil}},
+			matchIndex:  map[int]int{0: 2, 1: 0, 2: 0},
+			nextIndex:   map[int]int{0: 3, 1: 0, 2: 0},
+			response: &pb.AppendEntriesResponse{
+				Term:         0,
+				Success:      true,
+				ServerId:     1,
+				PrevLogIndex: 0,
+				Entries:      []*pb.LogEntry{{Term: 1, Index: 1}, {Term: 1, Index: 2}},
+			},
+			expectedEventResponse: EventResponse{
+				Error: nil,
+			},
+			expectedCommitIndex: 2,
+			expectedLastApplied: 2,
+			expectedMatchIndex:  map[int]int{0: 2, 1: 2, 2: 0},
+			expectedNextIndex:   map[int]int{0: 3, 1: 3, 2: 0},
+		},
+	}
+
+	for _, tt := range tests {
+		s := NewTestServer(0)
+		s.peers = tt.peers
+
+		s.raftState.state = tt.state
+		s.raftState.currentTerm = tt.currentTerm
+		s.raftState.commitIndex = tt.commitIndex
+		s.raftState.lastApplied = tt.lastApplied
+		s.raftState.log = tt.log
+		s.raftState.matchIndex = tt.matchIndex
+		s.raftState.nextIndex = tt.nextIndex
+
+		// copy before since nothing else should change
+		expectedRaftState := s.raftState
+
+		eventResponse := s.processAppendEntriesResponse(tt.response)
+
+		// set expected changed fields
+		expectedRaftState.commitIndex = tt.expectedCommitIndex
+		expectedRaftState.lastApplied = tt.expectedLastApplied
+		expectedRaftState.matchIndex = tt.expectedMatchIndex
+		expectedRaftState.nextIndex = tt.expectedNextIndex
+
+		assert.Equal(t, expectedRaftState, s.raftState)
+
+		assert.Equal(t, tt.expectedEventResponse, eventResponse)
+	}
+}
