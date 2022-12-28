@@ -8,9 +8,87 @@ import (
 	pb "github.com/dylan-p-wong/kvstore/api"
 )
 
-// func TestProcessPutRequest(t *testing.T) {
+func TestProcessPutRequest(t *testing.T) {
+	tests := []struct {
+		name  string
+		peers map[int]*peer
 
-// }
+		currentTerm int
+		commitIndex int
+		matchIndex  map[int]int
+		nextIndex   map[int]int
+		log         []*LogEntry
+
+		request         *pb.PutRequest
+		responseChannel chan EventResponse
+
+		expectedCommitIndex int
+		expectedMatchIndex  map[int]int
+		expectedNextIndex   map[int]int
+		expectedLog         []*LogEntry
+	}{
+		{
+			name:        "success with peers",
+			peers:       map[int]*peer{0: nil, 1: nil, 2: nil},
+			currentTerm: 1,
+			commitIndex: 0,
+			matchIndex:  map[int]int{0: 0, 1: 0, 2: 0},
+			nextIndex:   map[int]int{0: 1, 1: 1, 2: 1},
+			log:         []*LogEntry{},
+			request: &pb.PutRequest{
+				Key:   []byte("key"),
+				Value: []byte("value"),
+			},
+			responseChannel:     nil,
+			expectedCommitIndex: 0,
+			expectedMatchIndex:  map[int]int{0: 1, 1: 0, 2: 0},
+			expectedNextIndex:   map[int]int{0: 2, 1: 1, 2: 1},
+			expectedLog:         []*LogEntry{{term: 1, index: 1, command: "{\"Key\":\"key\",\"Value\":\"value\"}", responseChannel: nil}},
+		},
+		{
+			name:        "success with no peers",
+			peers:       map[int]*peer{},
+			currentTerm: 1,
+			commitIndex: 0,
+			matchIndex:  map[int]int{0: 0},
+			nextIndex:   map[int]int{0: 1},
+			log:         []*LogEntry{},
+			request: &pb.PutRequest{
+				Key:   []byte("key"),
+				Value: []byte("value"),
+			},
+			responseChannel:     nil,
+			expectedCommitIndex: 1,
+			expectedMatchIndex:  map[int]int{0: 1},
+			expectedNextIndex:   map[int]int{0: 2},
+			expectedLog:         []*LogEntry{{term: 1, index: 1, command: "{\"Key\":\"key\",\"Value\":\"value\"}", responseChannel: nil}},
+		},
+	}
+
+	for _, tt := range tests {
+		s := NewTestServer(0)
+		s.peers = tt.peers
+
+		s.raftState.currentTerm = tt.currentTerm
+		s.raftState.commitIndex = tt.commitIndex
+		s.raftState.matchIndex = tt.matchIndex
+		s.raftState.nextIndex = tt.nextIndex
+		s.raftState.log = tt.log
+
+		// copy before since nothing else should change
+		expectedRaftState := s.raftState
+
+		s.processPutRequest(tt.request, tt.responseChannel)
+
+		// set expected changed fields
+		expectedRaftState.commitIndex = tt.expectedCommitIndex
+		expectedRaftState.matchIndex = tt.expectedMatchIndex
+		expectedRaftState.nextIndex = tt.expectedNextIndex
+		expectedRaftState.log = tt.expectedLog
+
+		assert.Equal(t, expectedRaftState, s.raftState)
+	}
+}
 
 func TestHandleAllServerRequestResponseRules(t *testing.T) {
 	tests := []struct {

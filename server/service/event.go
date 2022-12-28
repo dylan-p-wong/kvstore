@@ -29,6 +29,7 @@ func (s *server) send(command interface{}) (interface{}, error) {
 
 	s.events <- event
 
+	// wait until we get a response on the channel
 	response := <-channel
 
 	if response.Error != nil {
