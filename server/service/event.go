@@ -130,7 +130,7 @@ func (s *server) candidateLoop() {
 			doVote = false
 		}
 
-		if votesGranted == (len(s.peers)+1)/2+1 {
+		if votesGranted == s.getMajority() {
 			s.sugar.Infow("candidate promoted to leader", "votes_granted", votesGranted)
 			s.raftState.state = LEADER
 			s.raftState.leader = s.id
@@ -173,13 +173,13 @@ func (s *server) leaderLoop() {
 
 	// see voliatile state on leaders
 	// we initialize nextIndex to leader last log index + 1
-	// we initialize matchIndex to 0
+	// we initialize matchIndex to last log index
 	for _, p := range s.peers {
 		s.raftState.nextIndex[p.id] = s.GetLastLogIndex() + 1
 		s.raftState.matchIndex[p.id] = 0
 	}
 	s.raftState.nextIndex[s.id] = s.GetLastLogIndex() + 1
-	s.raftState.matchIndex[s.id] = 0
+	s.raftState.matchIndex[s.id] = s.GetLastLogIndex()
 
 	s.sugar.Infow("starting peer heatbeats", "peers", s.peers)
 	for _, p := range s.peers {
@@ -470,7 +470,9 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 	}
 	sort.Ints(matchIndexes)
 
-	commitedIndex := matchIndexes[(len(s.peers)+1)/2+1-1]
+	// subtract 1 since 0-indexed array
+	// for example if N=3, then majority is 2 but we need index 1
+	commitedIndex := matchIndexes[s.getMajority()-1]
 
 	for s.raftState.commitIndex < commitedIndex {
 		currentCommitedIndex := s.raftState.commitIndex

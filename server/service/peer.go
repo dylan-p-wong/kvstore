@@ -60,7 +60,7 @@ func (p *peer) sendAppendEntriesRequest(request *pb.AppendEntriesRequest) {
 
 	// run in go routine so we do not block
 	go func() {
-		defer p.server.sugar.Infow("handled append entries response", "peer", p.id, "request", request)
+		defer p.server.sugar.Infow("handled append entries response", "peer", p.id, "request", request, "response", response)
 		p.server.send(response)
 	}()
 }
