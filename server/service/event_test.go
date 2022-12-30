@@ -322,6 +322,26 @@ func TestProcessRequestVoteRequest(t *testing.T) {
 				Error: nil,
 			},
 		},
+		{
+			name:        "votedFor is -1 but candidate log is NOT up to date",
+			currentTerm: 1,
+			votedFor:    -1,
+			log:         []*LogEntry{{term: 1, index: 1}},
+			request: &pb.RequestVoteRequest{
+				Term:         1,
+				CandidateId:  100,
+				LastLogIndex: 0,
+				LastLogTerm:  0,
+			},
+			expectedVotedFor: -1,
+			expectedEventResponse: EventResponse{
+				Response: &pb.RequestVoteResponse{
+					Term:        1,
+					VoteGranted: false,
+				},
+				Error: nil,
+			},
+		},
 	}
 
 	for _, tt := range tests {

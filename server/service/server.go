@@ -173,6 +173,10 @@ func (s *server) getElectionTimeout() time.Duration {
 	return s.electionTimeoutLowerBound + time.Duration(r)
 }
 
+func (s *server) getMajority() int {
+	return (len(s.peers)+1)/2 + 1
+}
+
 func (s *server) AddPeer(id int, url string) error {
 	if s.peers[id] != nil {
 		return errors.New("cannot add peer with the same id")
@@ -235,5 +239,9 @@ func (s *server) monitorState() {
 
 // logging state helper
 func (s *server) logState() {
-	s.sugar.Infow("server state", "commitIndex", s.raftState.commitIndex, "lastApplied", s.raftState.lastApplied, "nextIndex", s.raftState.nextIndex, "matchIndex", s.raftState.matchIndex, "log", s.raftState.log)
+	for _, le := range s.raftState.log {
+		s.sugar.Infow("server log", "command", le.command, "index", le.index, "term", le.term)
+	}
+
+	s.sugar.Infow("server state", "leader", s.raftState.leader, "state", s.raftState.state, "currentTerm", s.raftState.currentTerm, "votedFor", s.raftState.votedFor, "commitIndex", s.raftState.commitIndex, "lastApplied", s.raftState.lastApplied, "nextIndex", s.raftState.nextIndex, "matchIndex", s.raftState.matchIndex, "log", s.raftState.log)
 }

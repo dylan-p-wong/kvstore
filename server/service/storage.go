@@ -55,7 +55,7 @@ func (s *server) restoreFromStorage() error {
 			return err
 		}
 
-		le := newLogEntry(encoded.Term, encoded.Index, command, make(chan EventResponse))
+		le := newLogEntry(encoded.Term, encoded.Index, command, nil)
 		s.raftState.log = append(s.raftState.log, &le)
 	}
 

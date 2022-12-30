@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.2.0
 // - protoc             v3.21.8
-// source: kv.proto
+// source: api/kv.proto
 
 package api
 
@@ -249,5 +249,5 @@ var KV_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "kv.proto",
+	Metadata: "api/kv.proto",
 }
