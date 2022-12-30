@@ -24,7 +24,7 @@ message PutRequest {
 message PutResponse {
   bool success = 1;
   // for client to find current leader
-  uint64 leader = 2;
+  int64 leader = 2;
 }
 
 message GetRequest {
@@ -36,7 +36,7 @@ message GetResponse {
   bytes key = 2;
   bytes value = 3;
   // for client to find current leader
-  uint64 leader = 4;
+  int64 leader = 4;
 }
 
 message DeleteRequest {
@@ -46,7 +46,7 @@ message DeleteRequest {
 message DeleteResponse {
   bool success = 1;
   // for client to find current leader
-  uint64 leader = 2;
+  int64 leader = 2;
 }
 
 message LogEntry {

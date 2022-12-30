@@ -32,6 +32,7 @@ func newPeer(id int, url string, heartbeatInterval time.Duration, server *server
 		client:            pb.NewKVClient(connection),
 		heartbeatInterval: heartbeatInterval,
 		server:            server,
+		stopChannel:       make(chan bool),
 	}, nil
 }
 
@@ -123,8 +124,8 @@ func (p *peer) heartbeat() {
 			p.server.sugar.Infow("heartbeat stopped", "peer", p.id, "flush", flush)
 			if flush {
 				p.flush()
-				return
 			}
+			return
 		case <-ticker.C:
 			p.server.sugar.Infow("heartbeat timeout elapsed", "peer", p.id)
 			p.flush()

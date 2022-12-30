@@ -309,7 +309,7 @@ func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) Event
 	}
 
 	// if votedFor is null or candidateId AND candidate log is at least as up to date as reciever log grant vote
-	if s.raftState.votedFor == -1 || s.raftState.votedFor == int(request.CandidateId) && s.candidateUpToDate(request.LastLogTerm, request.LastLogIndex) {
+	if (s.raftState.votedFor == -1 || s.raftState.votedFor == int(request.CandidateId)) && s.candidateUpToDate(request.LastLogTerm, request.LastLogIndex) {
 		// set voted for to candidate
 		s.raftState.votedFor = int(request.CandidateId)
 		// persist votedFor

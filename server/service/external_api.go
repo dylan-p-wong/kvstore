@@ -13,7 +13,7 @@ func (s *server) Put(ctx context.Context, in *pb.PutRequest) (*pb.PutResponse, e
 
 	// put requests must be sent to the leader. we help the client by return the current leader
 	if s.raftState.state != LEADER {
-		return &pb.PutResponse{Success: false, Leader: uint64(s.raftState.leader)}, errors.New("not leader")
+		return &pb.PutResponse{Success: false, Leader: int64(s.raftState.leader)}, errors.New("not leader")
 	}
 
 	_, err := s.send(in)
@@ -30,7 +30,7 @@ func (s *server) Delete(ctx context.Context, in *pb.DeleteRequest) (*pb.DeleteRe
 
 	// delete requests must be sent to the leader. we help the client by return the current leader
 	if s.raftState.state != LEADER {
-		return &pb.DeleteResponse{Success: false, Leader: uint64(s.raftState.leader)}, errors.New("not leader")
+		return &pb.DeleteResponse{Success: false, Leader: int64(s.raftState.leader)}, errors.New("not leader")
 	}
 
 	// we basiclly put with an empty key
@@ -47,7 +47,7 @@ func (s *server) Get(ctx context.Context, in *pb.GetRequest) (*pb.GetResponse, e
 
 	// get requests must be sent to the leader. we help the client by return the current leader
 	if s.raftState.state != LEADER {
-		return &pb.GetResponse{Success: false, Leader: uint64(s.raftState.leader)}, errors.New("not leader")
+		return &pb.GetResponse{Success: false, Leader: int64(s.raftState.leader)}, errors.New("not leader")
 	}
 
 	value, err := s.logStorage.Get(string(in.GetKey()))
