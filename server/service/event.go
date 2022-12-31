@@ -62,6 +62,7 @@ func (s *server) followerLoop() {
 
 		select {
 		case <-s.stopped:
+			s.raftState.state = STOPPED
 			return
 		case event := <-s.events:
 			s.sugar.Infow("event recieved", "state", "FOLLOWER")

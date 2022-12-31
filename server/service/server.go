@@ -2,7 +2,9 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
+	"net"
 	"path/filepath"
 	"sync"
 	"time"
@@ -10,6 +12,7 @@ import (
 	pb "github.com/dylan-p-wong/kvstore/api"
 	"github.com/dylan-p-wong/kvstore/server/storage/kv"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -82,11 +85,15 @@ type server struct {
 
 	raftStorage RaftStorage
 	logStorage  LogStorage
+
+	grpcServer *grpc.Server
 }
 
 func NewServer(id int, url string, dir string, sugar *zap.SugaredLogger) (*server, error) {
 
 	state := raftState{
+		state:       INITIALIZED,
+		leader:      -1,
 		currentTerm: 0,
 		votedFor:    -1,
 		log:         make([]*LogEntry, 0),
@@ -145,7 +152,8 @@ func (s *server) Init() error {
 	return nil
 }
 
-func (s *server) Start() error {
+// set state to follower and starts the event loop
+func (s *server) StartEventLoop() error {
 	s.sugar.Infow("server starting")
 	err := s.Init()
 
@@ -163,9 +171,38 @@ func (s *server) Start() error {
 		s.loop()
 	}()
 
-	go s.monitorState()
+	// go s.monitorState()
 
 	return nil
+}
+
+func (s *server) StartServer() error {
+	s.StartEventLoop()
+
+	listen, err := net.Listen("tcp", fmt.Sprintf("%s", s.url))
+	if err != nil {
+		return err
+	}
+	grpcServer := grpc.NewServer()
+	pb.RegisterKVServer(grpcServer, s)
+
+	// attach grpcServer to our server
+	s.grpcServer = grpcServer
+
+	err = grpcServer.Serve(listen)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *server) Stop() {
+	s.stopped <- true
+
+	if s.grpcServer != nil {
+		s.grpcServer.Stop()
+	}
 }
 
 func (s *server) getElectionTimeout() time.Duration {
@@ -225,23 +262,23 @@ func (s *server) RemovePeer(id int) error {
 }
 
 // monitoring state
-func (s *server) monitorState() {
-	ticker := time.NewTicker(2000 * time.Millisecond)
-	defer ticker.Stop()
+// func (s *server) monitorState() {
+// 	ticker := time.NewTicker(2000 * time.Millisecond)
+// 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			s.logState()
-		}
-	}
-}
+// 	for {
+// 		select {
+// 		case <-ticker.C:
+// 			s.logState()
+// 		}
+// 	}
+// }
 
 // logging state helper
-func (s *server) logState() {
-	for _, le := range s.raftState.log {
-		s.sugar.Infow("server log", "command", le.command, "index", le.index, "term", le.term)
-	}
+// func (s *server) logState() {
+// 	for _, le := range s.raftState.log {
+// 		s.sugar.Infow("server log", "command", le.command, "index", le.index, "term", le.term)
+// 	}
 
-	s.sugar.Infow("server state", "leader", s.raftState.leader, "state", s.raftState.state, "currentTerm", s.raftState.currentTerm, "votedFor", s.raftState.votedFor, "commitIndex", s.raftState.commitIndex, "lastApplied", s.raftState.lastApplied, "nextIndex", s.raftState.nextIndex, "matchIndex", s.raftState.matchIndex, "log", s.raftState.log)
-}
+// 	s.sugar.Infow("server state", "leader", s.raftState.leader, "state", s.raftState.state, "currentTerm", s.raftState.currentTerm, "votedFor", s.raftState.votedFor, "commitIndex", s.raftState.commitIndex, "lastApplied", s.raftState.lastApplied, "nextIndex", s.raftState.nextIndex, "matchIndex", s.raftState.matchIndex, "log", s.raftState.log)
+// }
