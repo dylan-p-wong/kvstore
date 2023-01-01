@@ -171,7 +171,7 @@ func (s *server) StartEventLoop() error {
 		s.loop()
 	}()
 
-	// go s.monitorState()
+	go s.monitorState()
 
 	return nil
 }
@@ -262,23 +262,23 @@ func (s *server) RemovePeer(id int) error {
 }
 
 // monitoring state
-// func (s *server) monitorState() {
-// 	ticker := time.NewTicker(2000 * time.Millisecond)
-// 	defer ticker.Stop()
+func (s *server) monitorState() {
+	ticker := time.NewTicker(2000 * time.Millisecond)
+	defer ticker.Stop()
 
-// 	for {
-// 		select {
-// 		case <-ticker.C:
-// 			s.logState()
-// 		}
-// 	}
-// }
+	for {
+		select {
+		case <-ticker.C:
+			s.logState()
+		}
+	}
+}
 
 // logging state helper
-// func (s *server) logState() {
-// 	for _, le := range s.raftState.log {
-// 		s.sugar.Infow("server log", "command", le.command, "index", le.index, "term", le.term)
-// 	}
+func (s *server) logState() {
+	for _, le := range s.raftState.log {
+		s.sugar.Infow("server log", "command", le.command, "index", le.index, "term", le.term)
+	}
 
-// 	s.sugar.Infow("server state", "leader", s.raftState.leader, "state", s.raftState.state, "currentTerm", s.raftState.currentTerm, "votedFor", s.raftState.votedFor, "commitIndex", s.raftState.commitIndex, "lastApplied", s.raftState.lastApplied, "nextIndex", s.raftState.nextIndex, "matchIndex", s.raftState.matchIndex, "log", s.raftState.log)
-// }
+	s.sugar.Infow("server state", "leader", s.raftState.leader, "state", s.raftState.state, "currentTerm", s.raftState.currentTerm, "votedFor", s.raftState.votedFor, "commitIndex", s.raftState.commitIndex, "lastApplied", s.raftState.lastApplied, "nextIndex", s.raftState.nextIndex, "matchIndex", s.raftState.matchIndex, "log", s.raftState.log)
+}

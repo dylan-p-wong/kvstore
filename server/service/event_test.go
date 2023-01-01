@@ -198,6 +198,12 @@ func TestCandidateUpToDate(t *testing.T) {
 			candidateLastLogIndex: 1,
 			expected:              false,
 		},
+		{
+			log:                   []*LogEntry{{term: 1, index: 1}, {term: 1, index: 2}},
+			candidateLastLogTerm:  1,
+			candidateLastLogIndex: 3,
+			expected:              true,
+		},
 	}
 
 	for _, tt := range tests {

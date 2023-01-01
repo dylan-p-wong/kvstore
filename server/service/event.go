@@ -288,7 +288,7 @@ func (s *server) handleAllServerRequestResponseRules(term int, serverId int) {
 
 func (s *server) candidateUpToDate(candidateLastLogTerm uint64, candidateLastLogIndex uint64) bool {
 	if uint64(s.GetLastLogTerm()) == candidateLastLogTerm {
-		return uint64(s.GetLastLogIndex()) <= candidateLastLogTerm
+		return uint64(s.GetLastLogIndex()) <= candidateLastLogIndex
 	}
 	return uint64(s.GetLastLogTerm()) <= candidateLastLogTerm
 }
@@ -302,6 +302,7 @@ func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) Event
 
 	// reply false if term < currentTerm
 	if request.Term < uint64(s.raftState.currentTerm) {
+		s.sugar.Infow("processing request vote request fail term < currentTerm", "request", request)
 		response.Response = &pb.RequestVoteResponse{
 			Term:        uint64(s.raftState.currentTerm),
 			VoteGranted: false,
@@ -326,6 +327,7 @@ func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) Event
 		return response
 	}
 
+	s.sugar.Infow("processing request vote request fail", "request", request)
 	response.Response = &pb.RequestVoteResponse{
 		Term:        uint64(s.raftState.currentTerm),
 		VoteGranted: false,
@@ -334,7 +336,7 @@ func (s *server) processRequestVoteRequest(request *pb.RequestVoteRequest) Event
 }
 
 func (s *server) processRequestVoteResponse(response *pb.RequestVoteResponse) bool {
-	s.sugar.Infow("processing request vote response", "response", response)
+	s.sugar.Infow("processing request vote response", "response", response, "voteGranted", response.GetVoteGranted())
 	s.handleAllServerRequestResponseRules(int(response.Term), -1)
 
 	if response.VoteGranted && response.Term == uint64(s.raftState.currentTerm) {
@@ -457,8 +459,12 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 
 	// see leaders bullet 4
 	// if successful: update nextIndex and matchIndex for follower
-	s.raftState.matchIndex[int(response.ServerId)] = int(response.PrevLogIndex) + len(response.Entries)
-	s.raftState.nextIndex[int(response.ServerId)] = s.raftState.matchIndex[int(response.ServerId)] + 1
+	// see 5.4.2 commiting entries from previous terms
+	// we are also assuming entries are sorted by index here
+	if len(response.Entries) > 0 && response.Entries[len(response.Entries) - 1].Term == uint64(s.raftState.currentTerm) {
+		s.raftState.matchIndex[int(response.ServerId)] = int(response.PrevLogIndex) + len(response.Entries)
+	}
+	s.raftState.nextIndex[int(response.ServerId)] = int(response.PrevLogIndex) + len(response.Entries) + 1
 
 	// see leaders bullet 6
 	// if there exists an N such that N > commitIndex, a majority of matchIndex[i] >= N, and log[N].term == currentTerm: set commitIndex = N
