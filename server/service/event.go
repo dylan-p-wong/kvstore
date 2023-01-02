@@ -237,9 +237,19 @@ func (s *server) leaderLoop() {
 func (s *server) processPutRequest(request *pb.PutRequest, responseChannel chan EventResponse) {
 	s.sugar.Infow("processing PUT request", "request", request)
 
+	// only leaders can process commands
+	if s.raftState.state != LEADER {
+		// respond to client request channel
+		responseChannel <- EventResponse{
+			Error: ErrNotLeader,
+		}
+		return
+	}
+
 	// encode put request into command
 	command, err := encodeCommand(string(request.Key), string(request.Value))
 	if err != nil {
+		// respond to client request channel
 		responseChannel <- EventResponse{
 			Error: err,
 		}
@@ -253,9 +263,11 @@ func (s *server) processPutRequest(request *pb.PutRequest, responseChannel chan 
 
 	if err != nil {
 		s.sugar.Infow("error appending entry to log", err)
+		// respond to client request channel
 		responseChannel <- EventResponse{
 			Error: errors.New("error appending entry to log"),
 		}
+		return
 	}
 
 	// set match index for itself
@@ -263,7 +275,7 @@ func (s *server) processPutRequest(request *pb.PutRequest, responseChannel chan 
 	s.raftState.nextIndex[s.id] = s.raftState.matchIndex[s.id] + 1
 
 	if len(s.peers) == 0 {
-		s.raftState.commitIndex = s.GetLastLogIndex()
+		s.leaderPersistAndRespond()
 	}
 }
 
@@ -461,11 +473,18 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 	// if successful: update nextIndex and matchIndex for follower
 	// see 5.4.2 commiting entries from previous terms
 	// we are also assuming entries are sorted by index here
-	if len(response.Entries) > 0 && response.Entries[len(response.Entries) - 1].Term == uint64(s.raftState.currentTerm) {
+	if len(response.Entries) > 0 && response.Entries[len(response.Entries)-1].Term == uint64(s.raftState.currentTerm) {
 		s.raftState.matchIndex[int(response.ServerId)] = int(response.PrevLogIndex) + len(response.Entries)
 	}
 	s.raftState.nextIndex[int(response.ServerId)] = int(response.PrevLogIndex) + len(response.Entries) + 1
 
+	// responds to client command requests and persists committed entries and updates commitIndex
+	s.leaderPersistAndRespond()
+
+	return EventResponse{Error: nil}
+}
+
+func (s *server) leaderPersistAndRespond() {
 	// see leaders bullet 6
 	// if there exists an N such that N > commitIndex, a majority of matchIndex[i] >= N, and log[N].term == currentTerm: set commitIndex = N
 	// see leaders bullet 2
@@ -494,8 +513,8 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 
 			s.raftState.lastApplied = currentCommitedIndex + 1
 
-			// reply to waiting channel that the command has been replicated
-			if s.raftState.log[currentCommitedIndex+1-1].responseChannel != nil { // will this case ever happen
+			if s.raftState.log[currentCommitedIndex+1-1].responseChannel != nil {
+				// reply to waiting channel that the command has been replicated
 				s.raftState.log[currentCommitedIndex+1-1].responseChannel <- EventResponse{
 					Error: nil,
 				}
@@ -503,6 +522,4 @@ func (s *server) processAppendEntriesResponse(response *pb.AppendEntriesResponse
 		}
 		s.raftState.commitIndex++
 	}
-
-	return EventResponse{Error: nil}
 }

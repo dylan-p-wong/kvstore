@@ -1,12 +1,20 @@
 package service
 
 import (
+	"time"
+
 	"github.com/dylan-p-wong/kvstore/server/storage/kv"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/test/bufconn"
 
 	pb "github.com/dylan-p-wong/kvstore/api"
+)
+
+const (
+	DefaultTestHeartbeatInterval         = 10 * time.Millisecond
+	DefaultTestElectionTimeoutLowerBound = 40 * time.Millisecond
+	DefaultTestElectionTimeoutUpperBound = 50 * time.Millisecond
 )
 
 const bufSize = 1024 * 1024
@@ -36,9 +44,9 @@ func NewTestServer(id int) *server {
 		peers:                     make(map[int]*peer),
 		id:                        id,
 		url:                       url,
-		heartbeatInterval:         DefaultHeartbeatInterval,
-		electionTimeoutLowerBound: DefaultElectionTimeoutLowerBound,
-		electionTimeoutUpperBound: DefaultElectionTimeoutUpperBound,
+		heartbeatInterval:         DefaultTestHeartbeatInterval,
+		electionTimeoutLowerBound: DefaultTestElectionTimeoutLowerBound,
+		electionTimeoutUpperBound: DefaultTestElectionTimeoutUpperBound,
 
 		sugar: zap.NewNop().Sugar(),
 
