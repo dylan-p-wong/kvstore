@@ -2,7 +2,9 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
+	"net"
 	"path/filepath"
 	"sync"
 	"time"
@@ -10,6 +12,7 @@ import (
 	pb "github.com/dylan-p-wong/kvstore/api"
 	"github.com/dylan-p-wong/kvstore/server/storage/kv"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -82,11 +85,15 @@ type server struct {
 
 	raftStorage RaftStorage
 	logStorage  LogStorage
+
+	grpcServer *grpc.Server
 }
 
 func NewServer(id int, url string, dir string, sugar *zap.SugaredLogger) (*server, error) {
 
 	state := raftState{
+		state:       INITIALIZED,
+		leader:      -1,
 		currentTerm: 0,
 		votedFor:    -1,
 		log:         make([]*LogEntry, 0),
@@ -145,7 +152,8 @@ func (s *server) Init() error {
 	return nil
 }
 
-func (s *server) Start() error {
+// set state to follower and starts the event loop
+func (s *server) StartEventLoop() error {
 	s.sugar.Infow("server starting")
 	err := s.Init()
 
@@ -166,6 +174,35 @@ func (s *server) Start() error {
 	go s.monitorState()
 
 	return nil
+}
+
+func (s *server) StartServer() error {
+	s.StartEventLoop()
+
+	listen, err := net.Listen("tcp", fmt.Sprintf("%s", s.url))
+	if err != nil {
+		return err
+	}
+	grpcServer := grpc.NewServer()
+	pb.RegisterKVServer(grpcServer, s)
+
+	// attach grpcServer to our server
+	s.grpcServer = grpcServer
+
+	err = grpcServer.Serve(listen)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *server) Stop() {
+	s.stopped <- true
+
+	if s.grpcServer != nil {
+		s.grpcServer.Stop()
+	}
 }
 
 func (s *server) getElectionTimeout() time.Duration {

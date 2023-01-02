@@ -23,13 +23,16 @@ func TestProcessPutRequest(t *testing.T) {
 		responseChannel chan EventResponse
 
 		expectedCommitIndex int
+		expectedLastApplied int
 		expectedMatchIndex  map[int]int
 		expectedNextIndex   map[int]int
 		expectedLog         []*LogEntry
+
+		expectedResponseChannelEventResponse *EventResponse
 	}{
 		{
 			name:        "success with peers",
-			peers:       map[int]*peer{0: nil, 1: nil, 2: nil},
+			peers:       map[int]*peer{1: nil, 2: nil},
 			currentTerm: 1,
 			commitIndex: 0,
 			matchIndex:  map[int]int{0: 0, 1: 0, 2: 0},
@@ -39,11 +42,13 @@ func TestProcessPutRequest(t *testing.T) {
 				Key:   []byte("key"),
 				Value: []byte("value"),
 			},
-			responseChannel:     nil,
+			responseChannel:     make(chan EventResponse, 1),
 			expectedCommitIndex: 0,
+			expectedLastApplied: 0,
 			expectedMatchIndex:  map[int]int{0: 1, 1: 0, 2: 0},
 			expectedNextIndex:   map[int]int{0: 2, 1: 1, 2: 1},
 			expectedLog:         []*LogEntry{{term: 1, index: 1, command: "{\"Key\":\"key\",\"Value\":\"value\"}", responseChannel: nil}},
+			expectedResponseChannelEventResponse: nil,
 		},
 		{
 			name:        "success with no peers",
@@ -57,16 +62,22 @@ func TestProcessPutRequest(t *testing.T) {
 				Key:   []byte("key"),
 				Value: []byte("value"),
 			},
-			responseChannel:     nil,
+			responseChannel:     make(chan EventResponse, 1),
 			expectedCommitIndex: 1,
+			expectedLastApplied: 1,
 			expectedMatchIndex:  map[int]int{0: 1},
 			expectedNextIndex:   map[int]int{0: 2},
 			expectedLog:         []*LogEntry{{term: 1, index: 1, command: "{\"Key\":\"key\",\"Value\":\"value\"}", responseChannel: nil}},
+			expectedResponseChannelEventResponse: &EventResponse{
+				Response: nil,
+				Error: nil,
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		s := NewTestServer(0)
+		s.raftState.state = LEADER // we assume we are leader
 		s.peers = tt.peers
 
 		s.raftState.currentTerm = tt.currentTerm
@@ -85,6 +96,13 @@ func TestProcessPutRequest(t *testing.T) {
 		expectedRaftState.matchIndex = tt.expectedMatchIndex
 		expectedRaftState.nextIndex = tt.expectedNextIndex
 		expectedRaftState.log = tt.expectedLog
+		expectedRaftState.log[0].responseChannel = tt.responseChannel
+		expectedRaftState.lastApplied = tt.expectedLastApplied
+
+		if tt.expectedResponseChannelEventResponse != nil {
+			eventResponse := <-tt.responseChannel
+			assert.Equal(t, *tt.expectedResponseChannelEventResponse, eventResponse)
+		}
 
 		assert.Equal(t, expectedRaftState, s.raftState)
 	}
@@ -197,6 +215,12 @@ func TestCandidateUpToDate(t *testing.T) {
 			candidateLastLogTerm:  1,
 			candidateLastLogIndex: 1,
 			expected:              false,
+		},
+		{
+			log:                   []*LogEntry{{term: 1, index: 1}, {term: 1, index: 2}},
+			candidateLastLogTerm:  1,
+			candidateLastLogIndex: 3,
+			expected:              true,
 		},
 	}
 

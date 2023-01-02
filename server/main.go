@@ -1,18 +1,14 @@
 package main
 
 import (
-	"fmt"
 	"math/rand"
-	"net"
 	"os"
 	"time"
 
-	pb "github.com/dylan-p-wong/kvstore/api"
 	"github.com/dylan-p-wong/kvstore/server/config"
 	"github.com/dylan-p-wong/kvstore/server/service"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"google.golang.org/grpc"
 )
 
 func main() {
@@ -28,12 +24,6 @@ func main() {
 	defer logger.Sync()
 	sugar := logger.Sugar().With("node", cfg.Id)
 
-	listen, err := net.Listen("tcp", fmt.Sprintf("%s", cfg.URL))
-	if err != nil {
-		sugar.Infow("failed to listen", "err", err)
-		os.Exit(1)
-	}
-
 	server, err := service.NewServer(cfg.Id, cfg.URL, cfg.Directory, sugar)
 
 	if err != nil {
@@ -45,20 +35,11 @@ func main() {
 		server.AddPeer(k, v)
 	}
 
-	err = server.Start()
+	err = server.StartServer()
 
 	if err != nil {
 		sugar.Infow("failed to start server", "err", err)
 		os.Exit(1)
-	}
-
-	s := grpc.NewServer()
-	pb.RegisterKVServer(s, server)
-
-	sugar.Infow("server listening", "port", listen.Addr())
-
-	if err := s.Serve(listen); err != nil {
-		sugar.Infow("failed to server", "err", err)
 	}
 }
 

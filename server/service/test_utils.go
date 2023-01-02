@@ -1,14 +1,30 @@
 package service
 
 import (
+	"time"
+
 	"github.com/dylan-p-wong/kvstore/server/storage/kv"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/test/bufconn"
+
+	pb "github.com/dylan-p-wong/kvstore/api"
 )
+
+const (
+	DefaultTestHeartbeatInterval         = 10 * time.Millisecond
+	DefaultTestElectionTimeoutLowerBound = 40 * time.Millisecond
+	DefaultTestElectionTimeoutUpperBound = 50 * time.Millisecond
+)
+
+const bufSize = 1024 * 1024
 
 func NewTestServer(id int) *server {
 	url := ""
 
 	state := raftState{
+		state:       INITIALIZED,
+		leader:      -1,
 		currentTerm: 0,
 		votedFor:    -1,
 		log:         make([]*LogEntry, 0),
@@ -28,9 +44,9 @@ func NewTestServer(id int) *server {
 		peers:                     make(map[int]*peer),
 		id:                        id,
 		url:                       url,
-		heartbeatInterval:         DefaultHeartbeatInterval,
-		electionTimeoutLowerBound: DefaultElectionTimeoutLowerBound,
-		electionTimeoutUpperBound: DefaultElectionTimeoutUpperBound,
+		heartbeatInterval:         DefaultTestHeartbeatInterval,
+		electionTimeoutLowerBound: DefaultTestElectionTimeoutLowerBound,
+		electionTimeoutUpperBound: DefaultTestElectionTimeoutUpperBound,
 
 		sugar: zap.NewNop().Sugar(),
 
@@ -39,4 +55,23 @@ func NewTestServer(id int) *server {
 	}
 
 	return s
+}
+
+func (s *server) StartTestServer() error {
+	s.StartEventLoop()
+
+	listen := bufconn.Listen(bufSize)
+
+	grpcServer := grpc.NewServer()
+	pb.RegisterKVServer(grpcServer, s)
+
+	// attach grpcServer to our server
+	s.grpcServer = grpcServer
+
+	err := grpcServer.Serve(listen)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
