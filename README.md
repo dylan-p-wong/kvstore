@@ -33,7 +33,7 @@ Run a 3 node cluster.
 
 ### Using the client
 ```
-./scripts/start_client
+./scripts/start_client.sh
 ```
 - This will start the client REPL to help make requests to the cluster. The script contains configuration for the cluster above.
 - The client will randomly try to make a request to one of the servers in the cluster. If it fails due to not being the leader the next requests will be to the predicted leader. If it fails due to other errors it will try randomly again.
